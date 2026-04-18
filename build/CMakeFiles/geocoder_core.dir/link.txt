@@ -1,0 +1,2 @@
+/usr/bin/ar qc libgeocoder_core.a CMakeFiles/geocoder_core.dir/src/app.cpp.o CMakeFiles/geocoder_core.dir/src/model.cpp.o CMakeFiles/geocoder_core.dir/src/metrics.cpp.o CMakeFiles/geocoder_core.dir/src/ingest/gpkg_extractor.cpp.o CMakeFiles/geocoder_core.dir/src/query/bbox_query.cpp.o CMakeFiles/geocoder_core.dir/src/query/json.cpp.o CMakeFiles/geocoder_core.dir/src/server/http_server.cpp.o
+/usr/bin/ranlib libgeocoder_core.a

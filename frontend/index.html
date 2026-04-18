@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OSM Stuttgart Viewer</title>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; font-family: system-ui, sans-serif; }
+    #map { width: 100%; height: 100%; }
+    .panel {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 1000;
+      background: rgba(255, 255, 255, 0.95);
+      border-radius: 8px;
+      padding: 10px 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+      min-width: 220px;
+      font-size: 14px;
+    }
+    .panel h3 { margin: 0 0 8px 0; font-size: 14px; }
+    .panel .row { margin-bottom: 6px; }
+    .muted { color: #555; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="panel">
+    <h3>OSM Sheet-1 Viewer</h3>
+    <div class="row"><strong id="houseCount">Houses: 0</strong></div>
+    <div class="row"><strong id="streetCount">Streets: 0</strong></div>
+    <div class="muted">Backend: <code>http://127.0.0.1:8080</code></div>
+    <div class="muted">Move/zoom map to trigger bbox queries.</div>
+  </div>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <script>
+    const backendBase = "http://127.0.0.1:8080";
+
+    const map = L.map("map").setView([48.7758, 9.1829], 13);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: "&copy; OpenStreetMap contributors"
+    }).addTo(map);
+
+    const housesLayer = L.layerGroup().addTo(map);
+    const streetsLayer = L.layerGroup().addTo(map);
+
+    const houseCountEl = document.getElementById("houseCount");
+    const streetCountEl = document.getElementById("streetCount");
+
+    function bboxParam() {
+      const b = map.getBounds();
+      return `${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}`;
+    }
+
+    async function fetchJson(url) {
+      const res = await fetch(url);
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`HTTP ${res.status}: ${body}`);
+      }
+      return res.json();
+    }
+
+    async function refreshData() {
+      try {
+        const bbox = encodeURIComponent(bboxParam());
+        const [housesRes, streetsRes] = await Promise.all([
+          fetchJson(`${backendBase}/houses?bbox=${bbox}`),
+          fetchJson(`${backendBase}/streets?bbox=${bbox}`)
+        ]);
+
+        housesLayer.clearLayers();
+        streetsLayer.clearLayers();
+
+        const houses = housesRes.houses || [];
+        const streets = streetsRes.streets || [];
+
+        for (const h of houses) {
+          const marker = L.circleMarker([h.lat, h.lon], {
+            radius: 4,
+            color: "#0055cc",
+            fillColor: "#2a7fff",
+            fillOpacity: 0.8,
+            weight: 1
+          });
+          const label = `${h.street || ""} ${h.house_number || ""}, ${h.postcode || ""} ${h.city || ""}`.trim();
+          if (label) marker.bindPopup(label);
+          marker.addTo(housesLayer);
+        }
+
+        for (const s of streets) {
+          if (!Array.isArray(s.points) || s.points.length === 0) continue;
+          const latLngs = s.points.map(p => [p[0], p[1]]);
+          L.polyline(latLngs, { color: "#cc5500", weight: 3, opacity: 0.8 })
+            .bindPopup(`${s.name || "(unnamed)"} [${s.highway || "unknown"}]`)
+            .addTo(streetsLayer);
+        }
+
+        houseCountEl.textContent = `Houses: ${houses.length}`;
+        streetCountEl.textContent = `Streets: ${streets.length}`;
+      } catch (err) {
+        console.error(err);
+        houseCountEl.textContent = "Houses: error";
+        streetCountEl.textContent = "Streets: error";
+      }
+    }
+
+    map.on("moveend", refreshData);
+    refreshData();
+  </script>
+</body>
+</html>

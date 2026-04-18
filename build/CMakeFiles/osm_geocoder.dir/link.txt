@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/osm_geocoder.dir/src/main.cpp.o -o osm_geocoder  libgeocoder_core.a /usr/lib/x86_64-linux-gnu/libsqlite3.so 

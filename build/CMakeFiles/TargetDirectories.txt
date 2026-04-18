@@ -1,0 +1,4 @@
+/home/chiragd/Desktop/OpenStreetMap_ws/build/CMakeFiles/geocoder_core.dir
+/home/chiragd/Desktop/OpenStreetMap_ws/build/CMakeFiles/osm_geocoder.dir
+/home/chiragd/Desktop/OpenStreetMap_ws/build/CMakeFiles/edit_cache.dir
+/home/chiragd/Desktop/OpenStreetMap_ws/build/CMakeFiles/rebuild_cache.dir
