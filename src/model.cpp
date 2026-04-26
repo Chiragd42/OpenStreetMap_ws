@@ -1,5 +1,6 @@
 #include "model.hpp"
 
+#include <cmath>
 #include <stdexcept>
 
 namespace osm {
@@ -29,6 +30,31 @@ const std::string& StringPool::resolve(StringId id) const {
 
 std::size_t StringPool::size() const noexcept {
     return values_.size();
+}
+
+GridCellKey to_grid_cell(const double lon, const double lat, const float cell_size_deg) {
+    const auto scale = static_cast<double>(cell_size_deg);
+    GridCellKey key;
+    key.x = static_cast<std::int32_t>(std::floor(lon / scale));
+    key.y = static_cast<std::int32_t>(std::floor(lat / scale));
+    return key;
+}
+
+std::vector<GridCellKey> grid_cells_for_bbox(const BBox& bbox, const float cell_size_deg) {
+    const auto min_cell = to_grid_cell(bbox.min_lon, bbox.min_lat, cell_size_deg);
+    const auto max_cell = to_grid_cell(bbox.max_lon, bbox.max_lat, cell_size_deg);
+
+    std::vector<GridCellKey> cells;
+    const auto width = static_cast<std::size_t>(max_cell.x - min_cell.x + 1);
+    const auto height = static_cast<std::size_t>(max_cell.y - min_cell.y + 1);
+    cells.reserve(width * height);
+
+    for (std::int32_t x = min_cell.x; x <= max_cell.x; ++x) {
+        for (std::int32_t y = min_cell.y; y <= max_cell.y; ++y) {
+            cells.push_back(GridCellKey{.x = x, .y = y});
+        }
+    }
+    return cells;
 }
 
 } // namespace osm

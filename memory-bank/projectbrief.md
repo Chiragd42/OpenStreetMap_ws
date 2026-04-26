@@ -14,10 +14,11 @@ Build an offline, performance-oriented C++ geocoding system that can:
 
 ## Current Scope (Implemented Foundation)
 - C++20 + CMake scaffold is in place.
-- GPKG-first ingestion path is active (`data/gpkg/stuttgart-regbez.gpkg` default in config).
-- In-memory data model for houses, streets, and pooled strings exists.
-- Basic bbox query layer and lightweight HTTP API are implemented.
-- Leaflet frontend scaffold exists for viewport rendering.
+- **PBF-first ingestion path is active** (`data/pbf/stuttgart-regbez-260416.osm.pbf` default in config).
+- In-memory data model includes houses, streets, regions, pooled strings, and grid index metadata.
+- BBox query layer uses a lightweight grid index (`cell_id -> object indices`) for retrieval.
+- Lightweight HTTP API routes: `/stats`, `/houses`, `/streets`, `/regions`.
+- Leaflet frontend renders houses (points), streets (lines), and regions (polygons) with layer toggles.
 
 ## Constraints and Preferences
 - Project is long-running and should be documented continuously via memory bank files.

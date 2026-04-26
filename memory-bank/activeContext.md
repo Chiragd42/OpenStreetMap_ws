@@ -1,31 +1,36 @@
 # Active Context
 
 ## Current focus
-Initialize and stabilize foundational project documentation (memory bank) for long-term development continuity.
+Deliver Sheet-1-aligned PBF-first architecture with robust extraction counters, region visualization support, and lightweight indexed bbox querying.
 
 ## Current implementation snapshot
 - Offline monolith in C++20 with CMake build.
-- Active ingestion source: GeoPackage (`data/gpkg/stuttgart-regbez.gpkg` by default in extraction config).
-- Extractor currently pulls:
-  - roads from `gis_osm_roads_free` (line geometries),
-  - building polygons from `gis_osm_buildings_a_free` (reduced to representative points),
-  - optional admin boundaries count from `gis_osm_adminareas_a_free`.
+- Active ingestion source: OpenStreetMap PBF (`data/pbf/stuttgart-regbez-260416.osm.pbf` by default in extraction config).
+- PBF parser uses libosmium streaming with filter-on-read conversion into internal data structures.
+- Extraction currently builds:
+  - houses (address nodes + addressed building ways to representative points),
+  - streets (`highway=*` ways, language normalization `name:de` -> `name`),
+  - regions (simple administrative boundary ways + bounded handling for complex relations).
+- Spatial grid index is built after ingest for bbox query acceleration.
 - API routes available when started with `--serve`:
   - `GET /stats`
   - `GET /houses?bbox=minLon,minLat,maxLon,maxLat`
   - `GET /streets?bbox=minLon,minLat,maxLon,maxLat`
+  - `GET /regions?bbox=minLon,minLat,maxLon,maxLat`
 
 ## Recent decisions
-- Prioritize durable memory bank setup now because project is expected to run for a long time.
-- Keep repository lean using `.gitignore` (notably for `build/` and large `.gpkg` artifacts).
+- Commit to PBF-first Sheet-1 pipeline; GPKG path is now legacy/de-emphasized.
+- Use deterministic house representative-point strategy and expose quality counters.
+- Add lightweight fixed-grid index (`cell_id -> object indices`) instead of naive full scans.
 
 ## Immediate next steps
-1. Keep memory bank updated after every significant code/architecture change.
-2. Implement Sheet 2 reverse geocoding pipeline using current data model foundation.
-3. Introduce spatial indexing to replace naive bbox linear scans.
-4. Progress toward Sheet 3 forward geocoding with token index + ranking.
+1. Add optional GeoJSON debug export CLI path for validation artifacts.
+2. Harden PBF region handling incrementally where needed (without overengineering Sheet 1).
+3. Begin Sheet 2 work (PIP and reverse geocoder) on top of new region model/bbox precompute.
+4. Continue memory-bank hygiene after each significant change.
 
 ## Risks / watch items
 - Build artifacts can be accidentally tracked if ignore/tracking rules are not kept clean.
-- Current HTTP and query layers are intentionally minimal and need hardening for larger datasets.
-- Geometry parsing correctness/performance should be validated with broader test cases.
+- HTTP server is intentionally minimal and needs hardening for broader usage.
+- Region extraction deliberately bounds relation complexity; edge-case completeness remains future work.
+- Geometry correctness should still be validated with broader test fixtures.

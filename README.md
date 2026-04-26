@@ -2,21 +2,50 @@
 
 High-performance geocoder and reverse-geocoder project based on OpenStreetMap data.
 
-## Current scaffold
+## Sheet 1 status (current)
 
-- `data/gpkg/` → active input location for GeoPackage (`.gpkg`) files
-- `data/pbf/` → reserved for future direct `.osm.pbf` ingestion
+- **PBF-first ingestion is active** (libosmium streaming parser)
+- Data is processed into compact in-memory structures (houses, streets, regions)
+- Lightweight HTTP backend serves viewport bbox queries
+- Leaflet frontend visualizes points/lines/polygons
+
+## Project structure
+
+- `data/pbf/` → `.osm.pbf` inputs (active)
+- `data/gpkg/` → legacy path (currently de-emphasized)
 - `docs/ROADMAP.md` → end-to-end milestone roadmap (Sheets 1–3)
 - `docs/BACKLOG.md` → implementation backlog with grading-focused priorities
 - `src/` and `include/` → C++20 project skeleton
 
-## Active dataset path (current implementation)
+## Active dataset path
 
-The backend currently reads Stuttgart data from:
+Default extractor input:
 
-- `data/gpkg/stuttgart-regbez.gpkg`
 
-This path is wired as the default ingestion input in the extractor config.
+- `data/pbf/stuttgart-regbez-260416.osm.pbf`
+
+You can override via CLI:
+
+```bash
+./build/osm_geocoder --pbf=data/pbf/your-file.osm.pbf
+```
+
+## Dependencies
+
+### Ubuntu 22.04 (recommended submission target)
+
+```bash
+sudo apt update
+sudo apt install -y build-essential cmake zlib1g-dev libbz2-dev libexpat1-dev
+```
+
+Install **libosmium + protozero** headers (header-only libs), for example via package manager or vendor setup.
+
+### macOS (Homebrew)
+
+```bash
+brew install cmake libosmium protozero
+```
 
 ## Build (Ubuntu / Linux)
 
@@ -39,11 +68,13 @@ Available routes:
 - `GET /stats`
 - `GET /houses?bbox=minLon,minLat,maxLon,maxLat`
 - `GET /streets?bbox=minLon,minLat,maxLon,maxLat`
+- `GET /regions?bbox=minLon,minLat,maxLon,maxLat`
 
 Example bbox request (Stuttgart center):
 
 ```bash
 curl "http://127.0.0.1:8080/houses?bbox=9.15,48.75,9.23,48.81"
+curl "http://127.0.0.1:8080/regions?bbox=9.15,48.75,9.23,48.81"
 ```
 
 ## Run frontend (Leaflet viewer)
@@ -58,13 +89,21 @@ Open:
 
 - `http://127.0.0.1:5500/frontend/index.html`
 
-The frontend fetches viewport data from `http://127.0.0.1:8080` and displays houses (points) + streets (polylines).
+The frontend fetches viewport data from `http://127.0.0.1:8080` and displays:
+- houses (points)
+- streets (polylines)
+- regions (polygons)
+
+Layer toggles are available in the map panel.
 
 ## Notes
 
 - Tech baseline: **C++20 + CMake**
 - Initial target dataset: **Stuttgart**
 - Architecture intent: **offline monolith, in-memory performance-oriented pipeline**
-- Current extractor is **GPKG-first** (SQLite-based)
-- Streets are read from `gis_osm_roads_free` (lines)
-- Building geometries from `gis_osm_buildings_a_free` are reduced to representative points for house visualization
+- Current extractor is **PBF-first** (libosmium streaming)
+- Language policy: prefer `name:de`, fallback to `name`
+- House representative point policy:
+  - address node → direct point
+  - addressed building way → centroid (bbox fallback if needed)
+- Query path uses a simple **grid-based index** (`cell_id -> object indices`) for bbox retrieval

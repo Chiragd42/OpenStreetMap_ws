@@ -36,6 +36,12 @@
     <h3>OSM Sheet-1 Viewer</h3>
     <div class="row"><strong id="houseCount">Houses: 0</strong></div>
     <div class="row"><strong id="streetCount">Streets: 0</strong></div>
+    <div class="row"><strong id="regionCount">Regions: 0</strong></div>
+    <div class="row">
+      <label><input type="checkbox" id="showHouses" checked /> Houses</label>
+      <label><input type="checkbox" id="showStreets" checked /> Streets</label>
+      <label><input type="checkbox" id="showRegions" checked /> Regions</label>
+    </div>
     <div class="muted">Backend: <code>http://127.0.0.1:8080</code></div>
     <div class="muted">Move/zoom map to trigger bbox queries.</div>
   </div>
@@ -47,6 +53,9 @@
   ></script>
   <script>
     const backendBase = "http://127.0.0.1:8080";
+    const HOUSE_LOW_ZOOM_MAX = 13;
+    const HOUSE_MEDIUM_ZOOM_MAX = 15;
+    const REFRESH_DEBOUNCE_MS = 180;
 
     const map = L.map("map").setView([48.7758, 9.1829], 13);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -56,9 +65,21 @@
 
     const housesLayer = L.layerGroup().addTo(map);
     const streetsLayer = L.layerGroup().addTo(map);
+    const regionsLayer = L.layerGroup().addTo(map);
 
     const houseCountEl = document.getElementById("houseCount");
     const streetCountEl = document.getElementById("streetCount");
+    const regionCountEl = document.getElementById("regionCount");
+    const showHousesEl = document.getElementById("showHouses");
+    const showStreetsEl = document.getElementById("showStreets");
+    const showRegionsEl = document.getElementById("showRegions");
+    let refreshTimer = null;
+
+    function syncLayerVisibility() {
+      if (showHousesEl.checked) map.addLayer(housesLayer); else map.removeLayer(housesLayer);
+      if (showStreetsEl.checked) map.addLayer(streetsLayer); else map.removeLayer(streetsLayer);
+      if (showRegionsEl.checked) map.addLayer(regionsLayer); else map.removeLayer(regionsLayer);
+    }
 
     function bboxParam() {
       const b = map.getBounds();
@@ -74,33 +95,38 @@
       return res.json();
     }
 
+    function houseQueryForZoom(zoom) {
+      if (zoom <= HOUSE_LOW_ZOOM_MAX) {
+        return null;
+      }
+      if (zoom <= HOUSE_MEDIUM_ZOOM_MAX) {
+        return "limit=4000&stride=5";
+      }
+      return "limit=12000&stride=1";
+    }
+
+    function scheduleRefresh() {
+      if (refreshTimer !== null) {
+        clearTimeout(refreshTimer);
+      }
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        refreshData();
+      }, REFRESH_DEBOUNCE_MS);
+    }
+
     async function refreshData() {
+      streetsLayer.clearLayers();
+      regionsLayer.clearLayers();
+
+      const bbox = encodeURIComponent(bboxParam());
+      const housePlan = showHousesEl.checked ? houseQueryForZoom(map.getZoom()) : null;
+      let houses = [];
+      let houseError = false;
+
       try {
-        const bbox = encodeURIComponent(bboxParam());
-        const [housesRes, streetsRes] = await Promise.all([
-          fetchJson(`${backendBase}/houses?bbox=${bbox}`),
-          fetchJson(`${backendBase}/streets?bbox=${bbox}`)
-        ]);
-
-        housesLayer.clearLayers();
-        streetsLayer.clearLayers();
-
-        const houses = housesRes.houses || [];
+        const streetsRes = await fetchJson(`${backendBase}/streets?bbox=${bbox}`);
         const streets = streetsRes.streets || [];
-
-        for (const h of houses) {
-          const marker = L.circleMarker([h.lat, h.lon], {
-            radius: 4,
-            color: "#0055cc",
-            fillColor: "#2a7fff",
-            fillOpacity: 0.8,
-            weight: 1
-          });
-          const label = `${h.street || ""} ${h.house_number || ""}, ${h.postcode || ""} ${h.city || ""}`.trim();
-          if (label) marker.bindPopup(label);
-          marker.addTo(housesLayer);
-        }
-
         for (const s of streets) {
           if (!Array.isArray(s.points) || s.points.length === 0) continue;
           const latLngs = s.points.map(p => [p[0], p[1]]);
@@ -108,18 +134,84 @@
             .bindPopup(`${s.name || "(unnamed)"} [${s.highway || "unknown"}]`)
             .addTo(streetsLayer);
         }
-
-        houseCountEl.textContent = `Houses: ${houses.length}`;
         streetCountEl.textContent = `Streets: ${streets.length}`;
       } catch (err) {
         console.error(err);
-        houseCountEl.textContent = "Houses: error";
         streetCountEl.textContent = "Streets: error";
+      }
+
+      try {
+        const regionsRes = await fetchJson(`${backendBase}/regions?bbox=${bbox}`);
+        const regions = regionsRes.regions || [];
+        for (const r of regions) {
+          if (!Array.isArray(r.points) || r.points.length < 3) continue;
+          const latLngs = r.points.map(p => [p[0], p[1]]);
+          L.polygon(latLngs, {
+            color: "#2e8b57",
+            weight: 2,
+            opacity: 0.8,
+            fillColor: "#58c98a",
+            fillOpacity: 0.12
+          })
+            .bindPopup(`${r.name || "(unnamed region)"} (admin_level=${r.admin_level ?? -1})`)
+            .addTo(regionsLayer);
+        }
+        regionCountEl.textContent = `Regions: ${regions.length}`;
+      } catch (err) {
+        console.error(err);
+        regionCountEl.textContent = "Regions: error";
+      }
+
+      housesLayer.clearLayers();
+      if (!showHousesEl.checked) {
+        houseCountEl.textContent = "Houses: hidden";
+      } else if (housePlan === null) {
+        houseCountEl.textContent = `Houses: hidden (zoom > ${HOUSE_LOW_ZOOM_MAX})`;
+      } else {
+        try {
+          const housesRes = await fetchJson(`${backendBase}/houses?bbox=${bbox}&${housePlan}`);
+          houses = housesRes.houses || [];
+        } catch (err) {
+          console.error(err);
+          houseError = true;
+        }
+      }
+
+      if (houseError) {
+        houseCountEl.textContent = "Houses: error";
+      } else if (showHousesEl.checked && housePlan !== null) {
+        for (const h of houses) {
+          const marker = L.circleMarker([h.lat, h.lon], {
+            radius: 3,
+            color: "#0055cc",
+            fillColor: "#2a7fff",
+            fillOpacity: 0.65,
+            weight: 1
+          });
+          const label = `${h.street || ""} ${h.house_number || ""}, ${h.postcode || ""} ${h.city || ""}`.trim();
+          if (label) marker.bindPopup(label);
+          marker.addTo(housesLayer);
+        }
+        houseCountEl.textContent = `Houses: ${houses.length}`;
       }
     }
 
-    map.on("moveend", refreshData);
-    refreshData();
+    showHousesEl.addEventListener("change", () => {
+      syncLayerVisibility();
+      scheduleRefresh();
+    });
+    showStreetsEl.addEventListener("change", () => {
+      syncLayerVisibility();
+      scheduleRefresh();
+    });
+    showRegionsEl.addEventListener("change", () => {
+      syncLayerVisibility();
+      scheduleRefresh();
+    });
+
+    map.on("moveend", scheduleRefresh);
+    syncLayerVisibility();
+    scheduleRefresh();
   </script>
 </body>
 </html>

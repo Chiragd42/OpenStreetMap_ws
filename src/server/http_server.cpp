@@ -8,6 +8,9 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <chrono>
+#include <charconv>
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <iostream>
@@ -15,6 +18,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace osm {
 
@@ -25,6 +29,54 @@ struct HttpRequest {
     std::string path;
     std::string query;
 };
+
+struct ApiProfile {
+    std::string route;
+    std::size_t matched{0};
+    std::size_t returned{0};
+};
+
+std::optional<int> hex_value(const char c) {
+    if (c >= '0' && c <= '9') {
+        return c - '0';
+    }
+    if (c >= 'a' && c <= 'f') {
+        return 10 + (c - 'a');
+    }
+    if (c >= 'A' && c <= 'F') {
+        return 10 + (c - 'A');
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> url_decode(std::string_view input) {
+    std::string out;
+    out.reserve(input.size());
+
+    for (std::size_t i = 0; i < input.size(); ++i) {
+        const char c = input[i];
+        if (c == '%') {
+            if (i + 2 >= input.size()) {
+                return std::nullopt;
+            }
+            const auto hi = hex_value(input[i + 1]);
+            const auto lo = hex_value(input[i + 2]);
+            if (!hi.has_value() || !lo.has_value()) {
+                return std::nullopt;
+            }
+            out.push_back(static_cast<char>(((*hi) << 4) | (*lo)));
+            i += 2;
+            continue;
+        }
+        if (c == '+') {
+            out.push_back(' ');
+            continue;
+        }
+        out.push_back(c);
+    }
+
+    return out;
+}
 
 std::optional<HttpRequest> parse_request_line(std::string_view raw) {
     const auto line_end = raw.find("\r\n");
@@ -68,7 +120,7 @@ std::optional<std::string> get_query_param(std::string_view query, std::string_v
             const auto k = token.substr(0, eq);
             const auto v = token.substr(eq + 1);
             if (k == key) {
-                return std::string(v);
+                return url_decode(v);
             }
         }
 
@@ -79,6 +131,36 @@ std::optional<std::string> get_query_param(std::string_view query, std::string_v
     }
 
     return std::nullopt;
+}
+
+std::optional<std::size_t> parse_size_t_query_param(std::string_view raw) {
+    if (raw.empty()) {
+        return std::nullopt;
+    }
+    std::size_t value = 0;
+    const auto* begin = raw.data();
+    const auto* end = raw.data() + raw.size();
+    const auto result = std::from_chars(begin, end, value);
+    if (result.ec != std::errc{} || result.ptr != end) {
+        return std::nullopt;
+    }
+    return value;
+}
+
+std::vector<std::size_t> apply_stride_and_limit(
+    const std::vector<std::size_t>& indices,
+    const std::size_t stride,
+    const std::size_t limit) {
+    std::vector<std::size_t> filtered;
+    filtered.reserve(limit > 0 ? std::min(limit, indices.size()) : indices.size());
+
+    for (std::size_t i = 0; i < indices.size(); i += stride) {
+        filtered.push_back(indices[i]);
+        if (limit > 0 && filtered.size() >= limit) {
+            break;
+        }
+    }
+    return filtered;
 }
 
 std::string make_response(
@@ -101,6 +183,7 @@ std::string handle_api_request(
     const HttpRequest& request,
     const DataStore& data,
     const ParseStats& stats,
+    ApiProfile& profile,
     int& status_code,
     std::string& status_text) {
     if (request.method != "GET") {
@@ -110,12 +193,13 @@ std::string handle_api_request(
     }
 
     if (request.path == "/stats") {
+        profile.route = "/stats";
         status_code = 200;
         status_text = "OK";
         return serialize_stats_json(stats);
     }
 
-    if (request.path == "/houses" || request.path == "/streets") {
+    if (request.path == "/houses" || request.path == "/streets" || request.path == "/regions") {
         const auto bbox_param = get_query_param(request.query, "bbox");
         if (!bbox_param.has_value()) {
             status_code = 400;
@@ -134,14 +218,53 @@ std::string handle_api_request(
         status_text = "OK";
 
         if (request.path == "/houses") {
-            const auto indices = query_houses_in_bbox(data, *bbox);
+            profile.route = "/houses";
+            std::size_t stride = 1;
+            std::size_t limit = 0;
+
+            if (const auto stride_param = get_query_param(request.query, "stride"); stride_param.has_value()) {
+                const auto parsed = parse_size_t_query_param(*stride_param);
+                if (!parsed.has_value() || *parsed == 0) {
+                    status_code = 400;
+                    status_text = "Bad Request";
+                    return serialize_error_json("Invalid stride parameter. Expected positive integer");
+                }
+                stride = *parsed;
+            }
+
+            if (const auto limit_param = get_query_param(request.query, "limit"); limit_param.has_value()) {
+                const auto parsed = parse_size_t_query_param(*limit_param);
+                if (!parsed.has_value()) {
+                    status_code = 400;
+                    status_text = "Bad Request";
+                    return serialize_error_json("Invalid limit parameter. Expected non-negative integer");
+                }
+                limit = *parsed;
+            }
+
+            const auto matched = query_houses_in_bbox(data, *bbox);
+            const auto indices = apply_stride_and_limit(matched, stride, limit);
+            profile.matched = matched.size();
+            profile.returned = indices.size();
             return serialize_houses_json(data, indices);
         }
 
+        if (request.path == "/regions") {
+            profile.route = "/regions";
+            const auto indices = query_regions_in_bbox(data, *bbox);
+            profile.matched = indices.size();
+            profile.returned = indices.size();
+            return serialize_regions_json(data, indices);
+        }
+
+        profile.route = "/streets";
         const auto indices = query_streets_in_bbox(data, *bbox);
+        profile.matched = indices.size();
+        profile.returned = indices.size();
         return serialize_streets_json(data, indices);
     }
 
+    profile.route = request.path;
     status_code = 404;
     status_text = "Not Found";
     return serialize_error_json("Route not found");
@@ -225,13 +348,25 @@ int run_http_server(
         int status_code = 400;
         std::string status_text = "Bad Request";
         std::string body = serialize_error_json("Malformed HTTP request");
+        ApiProfile profile;
+        profile.route = "<invalid>";
 
+        const auto request_start = std::chrono::steady_clock::now();
         if (const auto request = parse_request_line(request_view)) {
-            body = handle_api_request(*request, data, stats, status_code, status_text);
+            body = handle_api_request(*request, data, stats, profile, status_code, status_text);
         }
+        const auto elapsed_ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - request_start).count();
 
         const auto response = make_response(status_code, status_text, "application/json; charset=utf-8", body);
         (void)send_all(client_fd, response);
+
+        std::cout << "HTTP " << status_code
+                  << " route=" << profile.route
+                  << " matched=" << profile.matched
+                  << " returned=" << profile.returned
+                  << " ms=" << elapsed_ms
+                  << '\n';
 
         ::close(client_fd);
         ++served_requests;

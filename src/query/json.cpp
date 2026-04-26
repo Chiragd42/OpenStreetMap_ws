@@ -88,7 +88,13 @@ std::string serialize_stats_json(const ParseStats& stats) {
         << "\"processed_relations\":" << stats.processed_relations << ','
         << "\"extracted_houses\":" << stats.extracted_houses << ','
         << "\"extracted_streets\":" << stats.extracted_streets << ','
-        << "\"extracted_admin_areas\":" << stats.extracted_admin_areas << ','
+        << "\"extracted_regions\":" << stats.extracted_regions << ','
+        << "\"houses_from_address_nodes\":" << stats.houses_from_address_nodes << ','
+        << "\"houses_from_polygon_centroid\":" << stats.houses_from_polygon_centroid << ','
+        << "\"houses_from_polygon_bbox_fallback\":" << stats.houses_from_polygon_bbox_fallback << ','
+        << "\"houses_skipped_invalid_geometry\":" << stats.houses_skipped_invalid_geometry << ','
+        << "\"unnamed_streets\":" << stats.unnamed_streets << ','
+        << "\"regions_skipped_complex_relations\":" << stats.regions_skipped_complex_relations << ','
         << "\"parse_seconds\":" << stats.parse_seconds << ','
         << "\"estimated_memory_bytes\":" << stats.estimated_memory_bytes
         << '}';
@@ -152,6 +158,7 @@ std::string serialize_streets_json(const DataStore& data, const std::vector<std:
         out << '{'
             << "\"name\":\"" << name << "\"," 
             << "\"highway\":\"" << highway << "\"," 
+            << "\"is_unnamed\":" << (s.is_unnamed ? "true" : "false") << ','
             << "\"points\":[";
 
         bool first_point = true;
@@ -167,6 +174,52 @@ std::string serialize_streets_json(const DataStore& data, const std::vector<std:
             first_point = false;
 
             const auto& p = data.street_points[point_idx];
+            out << "[" << p.lat << ',' << p.lon << "]";
+        }
+
+        out << "]}";
+    }
+
+    out << "]}";
+    return out.str();
+}
+
+std::string serialize_regions_json(const DataStore& data, const std::vector<std::size_t>& indices) {
+    std::ostringstream out;
+    out << "{\"regions\":[";
+
+    bool first_region = true;
+    for (const auto idx : indices) {
+        if (idx >= data.regions.size()) {
+            continue;
+        }
+
+        if (!first_region) {
+            out << ',';
+        }
+        first_region = false;
+
+        const auto& r = data.regions[idx];
+        const auto name = escape_json(resolve_string_or_empty(data.strings, r.name_id));
+
+        out << '{'
+            << "\"name\":\"" << name << "\","
+            << "\"admin_level\":" << r.admin_level << ','
+            << "\"points\":[";
+
+        bool first_point = true;
+        for (std::uint32_t j = 0; j < r.points_count; ++j) {
+            const auto point_idx = static_cast<std::size_t>(r.points_begin + j);
+            if (point_idx >= data.region_points.size()) {
+                break;
+            }
+
+            if (!first_point) {
+                out << ',';
+            }
+            first_point = false;
+
+            const auto& p = data.region_points[point_idx];
             out << "[" << p.lat << ',' << p.lon << "]";
         }
 

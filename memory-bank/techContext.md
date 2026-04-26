@@ -8,7 +8,9 @@
   - `osm_geocoder` (executable)
 
 ## Core dependencies
-- **SQLite3** (required by CMake): used for reading `.gpkg` (GeoPackage) content.
+- **libosmium** (header-only): PBF parsing and OSM object traversal.
+- **protozero** (header-only): protobuf foundation used by libosmium.
+- **zlib / bzip2 / expat / threads**: supporting libs required by libosmium stack.
 - **POSIX sockets** (`arpa/inet.h`, `sys/socket.h`, etc.) for in-process HTTP server.
 
 ## Project structure (current)
@@ -16,23 +18,26 @@
 - `src/` implementation files matching module boundaries
 - `frontend/index.html` Leaflet-based visualization entry
 - `docs/ROADMAP.md` and `docs/BACKLOG.md` for milestone and task planning
-- `data/gpkg/` and `data/pbf/` for dataset inputs/placeholders
+- `data/pbf/` active input directory (`stuttgart-regbez-260416.osm.pbf`)
+- `data/gpkg/` legacy/de-emphasized path
 
 ## Runtime behavior
-- Default input path in extractor config: `data/gpkg/stuttgart-regbez.gpkg`
+- Default input path in extractor config: `data/pbf/stuttgart-regbez-260416.osm.pbf`
 - CLI options:
   - `--serve`
   - `--port=<port>`
   - `--max-requests=<n>`
+  - `--pbf=<path>`
 - API JSON routes when serving:
   - `/stats`
   - `/houses?bbox=...`
   - `/streets?bbox=...`
+  - `/regions?bbox=...`
 
 ## Repository hygiene
 - `.gitignore` currently excludes:
   - `build/`
-  - `data/gpkg/*.gpkg`
+  - large local datasets/artifacts as configured
 - `.gitkeep` files preserve required directory structure.
 
 ## Operational commands
@@ -40,11 +45,13 @@
 cmake -S . -B build
 cmake --build build -j
 ./build/osm_geocoder
+./build/osm_geocoder --pbf=data/pbf/stuttgart-regbez-260416.osm.pbf
 ./build/osm_geocoder --serve --port=8080
 python3 -m http.server 5500
 ```
 
 ## Technical debt to track
 - Introduce robust tests for geometry parsing and query correctness.
-- Replace naive query scans with spatial index structures.
+- Add optional GeoJSON export helpers for debugging/validation.
+- Harden bounded region relation handling incrementally for Sheet 2 accuracy work.
 - Harden HTTP handling and error paths for broader usage.

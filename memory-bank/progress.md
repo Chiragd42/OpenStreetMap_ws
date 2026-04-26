@@ -1,23 +1,28 @@
 # Progress
 
 ## Current status summary
-Project has a strong Sheet-1-oriented foundation and a running local API/visualization loop, with major geocoding features still pending.
+Project now has a Sheet-1-aligned PBF-first ingestion + preprocessing + visualization pipeline, with Sheet 2/3 geocoding features still pending.
 
 ## What works now
 - Buildable C++20/CMake scaffold.
 - `geocoder_core` library and `osm_geocoder` executable.
-- GPKG ingestion via SQLite from Stuttgart dataset path.
-- Extraction of roads and building-derived representative house points.
-- Basic parse/memory metrics collection (`ParseStats`).
-- Lightweight HTTP server with bbox-filtered JSON endpoints:
+- PBF ingestion via libosmium from Stuttgart dataset path (`data/pbf/stuttgart-regbez-260416.osm.pbf`).
+- Extraction of:
+  - houses (address nodes + addressed building representative points),
+  - streets (with unnamed tracking + preferred-language naming),
+  - regions (bounded administrative extraction).
+- Parse/memory + extraction-quality metrics collection (`ParseStats`).
+- Lightweight HTTP server with indexed bbox-filtered JSON endpoints:
   - `/stats`
   - `/houses`
   - `/streets`
-- Frontend scaffold available for map rendering.
+  - `/regions`
+- Frontend renders houses/streets/regions with layer toggles.
+- Lightweight grid index integrated for bbox query acceleration.
 
 ## In progress / partially implemented
-- Admin boundary handling exists as optional count-oriented extraction, not yet exposed as full query/result feature.
-- BBox query uses linear scans (functional but not scalable enough for final performance goals).
+- Region relation handling is intentionally bounded (complex multipolygon completeness deferred).
+- Optional GeoJSON export path for debugging/validation not yet added.
 
 ## Not implemented yet (major)
 - Full reverse geocoding pipeline (Sheet 2).
@@ -28,11 +33,12 @@ Project has a strong Sheet-1-oriented foundation and a running local API/visuali
 ## Known issues / project risks
 - Push hygiene issues can recur if generated files are re-tracked accidentally.
 - Very large dataset artifacts must remain untracked to avoid remote push failures.
-- Performance ceilings likely without spatial indexing.
+- HTTP server remains intentionally minimal.
+- Relation-heavy region edge cases can still require careful handling in later phases.
 
 ## Next milestones (recommended order)
 1. Stabilize memory bank maintenance cadence.
-2. Add spatial indexing foundation.
-3. Implement and validate reverse geocoder.
-4. Implement forward geocoder + ranking.
+2. Add optional GeoJSON debug export + core correctness tests.
+3. Implement and validate reverse geocoder (Sheet 2) on new region model foundation.
+4. Implement forward geocoder + ranking (Sheet 3).
 5. Run profiling/optimization and finalize evaluation artifacts.
