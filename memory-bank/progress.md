@@ -19,10 +19,16 @@ Project now has a Sheet-1-aligned PBF-first ingestion + preprocessing + visualiz
   - `/regions`
 - Frontend renders houses/streets/regions with layer toggles.
 - Lightweight grid index integrated for bbox query acceleration.
+- Optional street-merge optimization is implemented and verified:
+  - `--merge-streets` / `--no-merge-streets`
+  - post-processing merge step
+  - street grid index rebuild after merge
+  - extra `[StreetMerge]` runtime log block for demo comparison
 
 ## In progress / partially implemented
 - Region relation handling is intentionally bounded (complex multipolygon completeness deferred).
 - Optional GeoJSON export path for debugging/validation not yet added.
+- Street merge code currently lives in `app.cpp` and can later be refactored to a dedicated preprocess module.
 
 ## Not implemented yet (major)
 - Full reverse geocoding pipeline (Sheet 2).
@@ -37,8 +43,9 @@ Project now has a Sheet-1-aligned PBF-first ingestion + preprocessing + visualiz
 - Relation-heavy region edge cases can still require careful handling in later phases.
 
 ## Next milestones (recommended order)
-1. Stabilize memory bank maintenance cadence.
-2. Add optional GeoJSON debug export + core correctness tests.
-3. Implement and validate reverse geocoder (Sheet 2) on new region model foundation.
-4. Implement forward geocoder + ranking (Sheet 3).
-5. Run profiling/optimization and finalize evaluation artifacts.
+1. Add one more optional merge metric (`avg_segments_per_merged_street`) for stronger defense during presentation.
+2. Add explicit README limitation note for merge heuristic behavior.
+3. Add optional GeoJSON debug export + core correctness tests.
+4. Implement and validate reverse geocoder (Sheet 2) on new region model foundation.
+5. Implement forward geocoder + ranking (Sheet 3).
+6. Run profiling/optimization and finalize evaluation artifacts.

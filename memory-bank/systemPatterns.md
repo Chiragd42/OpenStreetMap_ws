@@ -33,8 +33,9 @@ Current architecture is an offline-first monolith with clear module boundaries:
    - CORS enabled (`Access-Control-Allow-Origin: *`).
 
 6. **Application orchestration** (`app`, `main`)
-   - CLI parsing (`--serve`, `--port`, `--max-requests`, `--pbf=<path>`).
+   - CLI parsing (`--serve`, `--port`, `--max-requests`, `--pbf=<path>`, `--merge-streets`, `--no-merge-streets`).
    - Runs extraction and optional HTTP serving.
+   - Applies optional street-merge post-processing before serving.
 
 ## Key design choices
 - **String interning** to reduce duplicated textual memory.
@@ -43,11 +44,13 @@ Current architecture is an offline-first monolith with clear module boundaries:
 - **Language normalization rule:** prefer `name:de`, fallback `name`.
 - **Deterministic house representative point policy:** address node direct; addressed building polygon centroid with bbox fallback.
 - **Explicit metrics capture** (`ParseStats`, `Stopwatch`) for grading evidence.
+- **Feature-flagged optimization:** street merge can be toggled ON/OFF at runtime for demo safety and A/B comparison.
 
 ## Known architectural limitations (current)
 - HTTP parser is intentionally minimal and not production hardening-focused.
 - Region relation handling is intentionally bounded for Sheet 1 (complex multipolygon completeness deferred).
 - Forward/reverse geocoding pipelines not yet fully implemented.
+- Street merge is heuristic (connectivity-based) and may not perfectly preserve all semantic street boundaries in edge cases.
 
 ## Expected evolution path
 1. Harden region geometry handling as needed for Sheet 2 point-in-polygon accuracy.

@@ -1,141 +1,154 @@
-# OpenStreetMap_ws
+# OpenStreetMap Geocoder (Sheet 1)
 
-High-performance geocoder and reverse-geocoder project based on OpenStreetMap data.
+This project builds a fast in-memory geodata pipeline from OpenStreetMap PBF data.
 
-## Sheet 1 status (current)
+It includes:
+- PBF extraction (houses, streets, regions)
+- local HTTP backend with bbox endpoints
+- Leaflet frontend map viewer
+- optional street merge optimization for cleaner road data
 
-- **PBF-first ingestion is active** (libosmium streaming parser)
-- Data is processed into compact in-memory structures (houses, streets, regions)
-- Lightweight HTTP backend serves viewport bbox queries
-- Leaflet frontend visualizes points/lines/polygons
+---
 
-## Project structure
+## 1) Quick start (easy flow)
 
-- `data/pbf/` → `.osm.pbf` inputs (active)
-- `data/gpkg/` → legacy path (currently de-emphasized)
-- `docs/ROADMAP.md` → end-to-end milestone roadmap (Sheets 1–3)
-- `docs/BACKLOG.md` → implementation backlog with grading-focused priorities
-- `src/` and `include/` → C++20 project skeleton
+### Step 1: open terminal in this project folder
 
-## Active dataset path
-
-Default extractor input:
-
-
-- `data/pbf/stuttgart-regbez-260416.osm.pbf`
-
-You can override via CLI:
-
-```bash
-./build/osm_geocoder --pbf=data/pbf/your-file.osm.pbf
-```
-
-## Dependencies
-
-### Ubuntu 22.04 (recommended submission target)
-
-```bash
-sudo apt update
-sudo apt install -y build-essential cmake zlib1g-dev libbz2-dev libexpat1-dev
-```
-
-Install **libosmium + protozero** headers (header-only libs), for example via package manager or vendor setup.
-
-### macOS (Homebrew)
-
-```bash
-brew install cmake libosmium protozero
-```
-
-## Build (Ubuntu / Linux)
-
-```bash
-cmake -S . -B build
-cmake --build build -j
-./build/osm_geocoder
-```
-
-## Demo quick start (short commands)
-
-After cloning and installing dependencies, use:
-
+### Step 2: prepare data + build cache
 ```bash
 make prep
+```
+
+### Step 3: start backend
+```bash
 make server
 ```
 
-In another terminal:
-
+### Step 4: start frontend (new terminal)
 ```bash
 make ui
 ```
 
-Open:
-
-- `http://127.0.0.1:5500/frontend/index.html`
-
-What these do:
-- `make prep` → builds release binary and preprocesses PBF into cache (`data/cache/stuttgart.bin`)
-- `make server` → starts backend from cache (fast startup)
-- `make ui` → starts static frontend server
-
-Optional overrides:
-
-```bash
-make prep PBF=data/pbf/your-file.osm.pbf CACHE=data/cache/your-file.bin
-make server CACHE=data/cache/your-file.bin PORT=8080
-make ui UI_PORT=5500
+### Step 5: open GUI in browser
+```text
+http://127.0.0.1:5500/frontend/index.html
 ```
 
-## Run backend API
+That’s it.
 
-Start the local in-memory API server:
+---
 
-```bash
-./build/osm_geocoder --serve --port=8080
+## 2) Where to put your PBF file
+
+Put your `.osm.pbf` file in:
+
+```text
+data/pbf/
 ```
 
-Available routes:
+Current default file used by short commands:
+
+```text
+data/pbf/stuttgart-regbez-260416.osm.pbf
+```
+
+---
+
+## 3) What the make commands do
+
+- `make prep`
+  - builds release binary
+  - parses PBF
+  - writes cache file (default: `data/cache/stuttgart.bin`)
+
+- `make server`
+  - loads cache file
+  - starts backend server (default port 8080)
+
+- `make ui`
+  - starts static frontend server (default port 5500)
+
+---
+
+## 4) Backend API routes
+
+When backend is running (`make server`), available routes are:
 
 - `GET /stats`
 - `GET /houses?bbox=minLon,minLat,maxLon,maxLat`
 - `GET /streets?bbox=minLon,minLat,maxLon,maxLat`
 - `GET /regions?bbox=minLon,minLat,maxLon,maxLat`
 
-Example bbox request (Stuttgart center):
+Example:
 
 ```bash
 curl "http://127.0.0.1:8080/houses?bbox=9.15,48.75,9.23,48.81"
-curl "http://127.0.0.1:8080/regions?bbox=9.15,48.75,9.23,48.81"
 ```
 
-## Run frontend (Leaflet viewer)
+---
 
-In a second terminal, serve the static frontend:
+## 5) Street merge optimization (optional task)
+
+You can run with merge ON or OFF:
+
+- ON: `--merge-streets`
+- OFF: `--no-merge-streets`
+
+If not set, default is ON.
+
+The program prints normal stats first, then a small block:
+
+```text
+[StreetMerge]
+  enabled: yes/no
+  raw_streets: X
+  merged_streets: Y
+  reduced: Z (% )
+  merge_time_ms: T
+```
+
+So demo comparison is easy:
+- run once with OFF (baseline)
+- run once with ON (optimized)
+
+---
+
+## 6) Important limitation note (for presentation)
+
+Street merging is heuristic and connectivity-based.
+It reduces fragmentation, but may not perfectly preserve semantic street boundaries in all OSM edge cases.
+
+---
+
+## 7) One clean defense line (for viva/demo)
+
+“We only merge within spatially connected components, so disconnected streets sharing a name are not merged.”
+
+---
+
+## 8) Dependencies
+
+### Ubuntu 22.04
+```bash
+sudo apt update
+sudo apt install -y build-essential cmake zlib1g-dev libbz2-dev libexpat1-dev
+```
+
+Also install header-only libs:
+- libosmium
+- protozero
+
+### macOS (Homebrew)
+```bash
+brew install cmake libosmium protozero
+```
+
+---
+
+## 9) Manual build/run (without make shortcuts)
 
 ```bash
-python3 -m http.server 5500
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release -j
+./build-release/osm_geocoder --help
 ```
-
-Open:
-
-- `http://127.0.0.1:5500/frontend/index.html`
-
-The frontend fetches viewport data from `http://127.0.0.1:8080` and displays:
-- houses (points)
-- streets (polylines)
-- regions (polygons)
-
-Layer toggles are available in the map panel.
-
-## Notes
-
-- Tech baseline: **C++20 + CMake**
-- Initial target dataset: **Stuttgart**
-- Architecture intent: **offline monolith, in-memory performance-oriented pipeline**
-- Current extractor is **PBF-first** (libosmium streaming)
-- Language policy: prefer `name:de`, fallback to `name`
-- House representative point policy:
-  - address node → direct point
-  - addressed building way → centroid (bbox fallback if needed)
-- Query path uses a simple **grid-based index** (`cell_id -> object indices`) for bbox retrieval
