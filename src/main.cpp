@@ -9,7 +9,7 @@
 namespace {
 
 void print_usage() {
-    std::cout << "Usage: osm_geocoder [--serve] [--port=<port>] [--max-requests=<n>] [--pbf=<path>]\n";
+    std::cout << "Usage: osm_geocoder [--serve] [--port=<port>] [--max-requests=<n>] [--pbf=<path>] [--save-cache=<path>] [--load-cache=<path>]\n";
 }
 
 bool parse_u16_arg(std::string_view raw, std::uint16_t& out) {
@@ -83,6 +83,16 @@ int main(int argc, char** argv) {
 
         if (arg.rfind("--pbf=", 0) == 0) {
             options.pbf_path = std::string(arg.substr(6));
+            continue;
+        }
+
+        if (arg.rfind("--save-cache=", 0) == 0) {
+            options.save_cache_path = std::string(arg.substr(13));
+            continue;
+        }
+
+        if (arg.rfind("--load-cache=", 0) == 0) {
+            options.load_cache_path = std::string(arg.substr(13));
             continue;
         }
 

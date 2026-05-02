@@ -32,6 +32,8 @@ public:
     [[nodiscard]] StringId intern(std::string_view value);
     [[nodiscard]] const std::string& resolve(StringId id) const;
     [[nodiscard]] std::size_t size() const noexcept;
+    [[nodiscard]] const std::vector<std::string>& values() const noexcept;
+    void reset_from_values(std::vector<std::string> values);
 
 private:
     std::vector<std::string> values_;

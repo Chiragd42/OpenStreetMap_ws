@@ -35,6 +35,7 @@ endif()
 
 set(GEOCODER_CORE_SOURCES
     src/app.cpp
+    src/cache/datastore_cache.cpp
     src/model.cpp
     src/metrics.cpp
     src/ingest/pbf_extractor.cpp

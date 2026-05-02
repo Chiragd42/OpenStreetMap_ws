@@ -32,6 +32,19 @@ std::size_t StringPool::size() const noexcept {
     return values_.size();
 }
 
+const std::vector<std::string>& StringPool::values() const noexcept {
+    return values_;
+}
+
+void StringPool::reset_from_values(std::vector<std::string> values) {
+    values_ = std::move(values);
+    index_by_value_.clear();
+    index_by_value_.reserve(values_.size());
+    for (std::size_t i = 0; i < values_.size(); ++i) {
+        index_by_value_.emplace(values_[i], static_cast<StringId>(i));
+    }
+}
+
 GridCellKey to_grid_cell(const double lon, const double lat, const float cell_size_deg) {
     const auto scale = static_cast<double>(cell_size_deg);
     GridCellKey key;

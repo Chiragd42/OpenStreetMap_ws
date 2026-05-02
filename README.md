@@ -55,6 +55,38 @@ cmake --build build -j
 ./build/osm_geocoder
 ```
 
+## Demo quick start (short commands)
+
+After cloning and installing dependencies, use:
+
+```bash
+make prep
+make server
+```
+
+In another terminal:
+
+```bash
+make ui
+```
+
+Open:
+
+- `http://127.0.0.1:5500/frontend/index.html`
+
+What these do:
+- `make prep` → builds release binary and preprocesses PBF into cache (`data/cache/stuttgart.bin`)
+- `make server` → starts backend from cache (fast startup)
+- `make ui` → starts static frontend server
+
+Optional overrides:
+
+```bash
+make prep PBF=data/pbf/your-file.osm.pbf CACHE=data/cache/your-file.bin
+make server CACHE=data/cache/your-file.bin PORT=8080
+make ui UI_PORT=5500
+```
+
 ## Run backend API
 
 Start the local in-memory API server:
