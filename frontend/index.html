@@ -95,6 +95,12 @@
       return "detail";
     }
 
+    function maxRegionAdminLevelForZoom(zoom) {
+      if (zoom <= 8) return 6;
+      if (zoom <= 11) return 8;
+      return Number.POSITIVE_INFINITY;
+    }
+
     function captureBoundsSnapshot() {
       const b = map.getBounds();
       return {
@@ -183,15 +189,22 @@
 
     function applyRegionFeatures(regions, zoom) {
       regionsLayer.clearLayers();
-      const weight = zoom <= REGION_CONTEXT_MAX_ZOOM ? 2 : 1;
-      const fillOpacity = zoom <= REGION_CONTEXT_MAX_ZOOM ? 0.12 : 0.05;
+      const maxAdminLevel = maxRegionAdminLevelForZoom(zoom);
+      const farZoom = zoom <= 8;
+      const midZoom = zoom > 8 && zoom <= 11;
+      const weight = farZoom ? 1 : (midZoom ? 1.5 : 2);
+      const fillOpacity = farZoom ? 0.0 : (midZoom ? 0.04 : 0.12);
+      const lineOpacity = farZoom ? 0.55 : 0.8;
+
       for (const r of regions) {
         if (!Array.isArray(r.points) || r.points.length < 3) continue;
+        if (r.admin_level != null && r.admin_level > maxAdminLevel) continue;
+
         const latLngs = r.points.map(p => [p[0], p[1]]);
         L.polygon(latLngs, {
           color: "#2e8b57",
           weight,
-          opacity: 0.8,
+          opacity: lineOpacity,
           fillColor: "#58c98a",
           fillOpacity,
         })
