@@ -321,7 +321,7 @@ int App::run(const AppOptions& options) const {
         merge_stats = merge_streets_in_place(data);
     }
 
-    std::cout << "OSM geocoder Sheet-1 pipeline initialized (PBF-first, target: Stuttgart)." << '\n';
+    std::cout << "OSM geocoder Sheet-1 pipeline initialized (PBF-first, target: Baden-Wuerttemberg)." << '\n';
     std::cout << "Input source: " << source_description << '\n';
     std::cout << "Processed nodes: " << stats.processed_nodes << '\n';
     std::cout << "Processed ways: " << stats.processed_ways << '\n';

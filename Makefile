@@ -2,18 +2,13 @@
 
 BUILD_DIR := build-release
 BINARY := $(BUILD_DIR)/osm_geocoder
-PBF ?= data/pbf/stuttgart-regbez-260416.osm.pbf
-CACHE ?= data/cache/stuttgart.bin
+PBF ?= data/pbf/baden-wuerttemberg-260430.osm.pbf
+CACHE ?= data/cache/baden-wuerttemberg-260430.bin
 PORT ?= 8080
 UI_PORT ?= 5500
 
 prep:
-	@set -e; \
-	start_ts=$$(date +%s); \
-	if [ ! -f "$(PBF)" ]; then \
-		echo "ERROR: PBF file not found at $(PBF)"; \
-		exit 1; \
-	fi; \
+	@start_ts=$$(date +%s); \
 	cmake -S . -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=Release >/dev/null; \
 	cmake --build $(BUILD_DIR) -j >/dev/null; \
 	mkdir -p $$(dirname $(CACHE)); \
@@ -30,12 +25,7 @@ prep:
 	fi
 
 server:
-	@set -e; \
-	start_ts=$$(date +%s); \
-	if [ ! -f "$(CACHE)" ]; then \
-		echo "ERROR: cache file not found at $(CACHE). Run make prep first."; \
-		exit 1; \
-	fi; \
+	@start_ts=$$(date +%s); \
 	log_file=/tmp/osm_server.log; \
 	./$(BINARY) --load-cache=$(CACHE) --serve --port=$(PORT) >$$log_file 2>&1 & \
 	server_pid=$$!; \

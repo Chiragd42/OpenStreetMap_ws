@@ -8,7 +8,7 @@
 namespace osm {
 
 struct ExtractionConfig {
-    std::string input_pbf_path{"data/pbf/stuttgart-regbez-260416.osm.pbf"};
+    std::string input_pbf_path{"data/pbf/baden-wuerttemberg-260430.osm.pbf"};
     bool include_regions{true};
     float grid_cell_size_deg{0.01F};
 };
