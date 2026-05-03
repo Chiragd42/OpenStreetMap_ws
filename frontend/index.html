@@ -62,8 +62,11 @@
     const REFRESH_DEBOUNCE_MS = 180;
     const BBOX_ROUND_DECIMALS = 3;
     const MIN_CENTER_SHIFT_DEG = 0.002;
+    const MAX_VIEWPORT_CACHE_ENTRIES = 48;
 
-    const map = L.map("map").setView([48.7758, 9.1829], 13);
+    const map = L.map("map");
+    const germanyBounds = [[47.27, 5.87], [55.06, 15.04]];
+    map.fitBounds(germanyBounds);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
       attribution: "&copy; OpenStreetMap contributors"
@@ -84,6 +87,7 @@
     let lastRenderKey = null;
     let lastBoundsSnapshot = null;
     const viewportCache = new Map();
+    let requestSeq = 0;
 
     function roundCoord(v) {
       return Number(v.toFixed(BBOX_ROUND_DECIMALS));
@@ -176,6 +180,17 @@
       ].join("|");
     }
 
+    function putViewportCache(key, payload) {
+      if (viewportCache.has(key)) {
+        viewportCache.delete(key);
+      }
+      viewportCache.set(key, payload);
+      while (viewportCache.size > MAX_VIEWPORT_CACHE_ENTRIES) {
+        const oldestKey = viewportCache.keys().next().value;
+        viewportCache.delete(oldestKey);
+      }
+    }
+
     function applyStreetFeatures(streets) {
       streetsLayer.clearLayers();
       for (const s of streets) {
@@ -192,9 +207,9 @@
       const maxAdminLevel = maxRegionAdminLevelForZoom(zoom);
       const farZoom = zoom <= 8;
       const midZoom = zoom > 8 && zoom <= 11;
-      const weight = farZoom ? 1 : (midZoom ? 1.5 : 2);
-      const fillOpacity = farZoom ? 0.0 : (midZoom ? 0.04 : 0.12);
-      const lineOpacity = farZoom ? 0.55 : 0.8;
+      const weight = farZoom ? 1.35 : (midZoom ? 1.7 : 2);
+      const fillOpacity = farZoom ? 0.0 : (midZoom ? 0.05 : 0.12);
+      const lineOpacity = farZoom ? 0.82 : 0.8;
 
       for (const r of regions) {
         if (!Array.isArray(r.points) || r.points.length < 3) continue;
@@ -299,6 +314,7 @@
       }
       activeController = new AbortController();
       const signal = activeController.signal;
+      const localRequestSeq = ++requestSeq;
 
       try {
         const requests = [];
@@ -313,7 +329,11 @@
           houses: housesRes.houses || [],
         };
 
-        viewportCache.set(cacheKey, payload);
+        if (localRequestSeq !== requestSeq) {
+          return;
+        }
+
+        putViewportCache(cacheKey, payload);
         renderPayload(payload, zoom, housePlan, streetPlan);
         lastRenderKey = cacheKey;
         lastBoundsSnapshot = { ...snapshot, bucket };
