@@ -53,11 +53,15 @@
   ></script>
   <script>
     const backendBase = "http://127.0.0.1:8080";
-    const STREET_MIN_ZOOM = 12;
-    const STREET_MEDIUM_ZOOM_MAX = 14;
-    const HOUSE_LOW_ZOOM_MAX = 13;
-    const HOUSE_MEDIUM_ZOOM_MAX = 15;
+    const STREET_MIN_ZOOM = 14;
+    const STREET_MEDIUM_ZOOM_MAX = 16;
+    const REGION_ONLY_MAX_ZOOM = 9;
+    const REGION_CONTEXT_MAX_ZOOM = 13;
+    const HOUSE_LOW_ZOOM_MAX = 15;
+    const HOUSE_MEDIUM_ZOOM_MAX = 17;
     const REFRESH_DEBOUNCE_MS = 180;
+    const BBOX_ROUND_DECIMALS = 3;
+    const MIN_CENTER_SHIFT_DEG = 0.002;
 
     const map = L.map("map").setView([48.7758, 9.1829], 13);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -76,6 +80,40 @@
     const showStreetsEl = document.getElementById("showStreets");
     const showRegionsEl = document.getElementById("showRegions");
     let refreshTimer = null;
+    let activeController = null;
+    let lastRenderKey = null;
+    let lastBoundsSnapshot = null;
+    const viewportCache = new Map();
+
+    function roundCoord(v) {
+      return Number(v.toFixed(BBOX_ROUND_DECIMALS));
+    }
+
+    function zoomBucket(zoom) {
+      if (zoom <= REGION_ONLY_MAX_ZOOM) return "region-only";
+      if (zoom <= REGION_CONTEXT_MAX_ZOOM) return "region-context";
+      return "detail";
+    }
+
+    function captureBoundsSnapshot() {
+      const b = map.getBounds();
+      return {
+        west: b.getWest(),
+        south: b.getSouth(),
+        east: b.getEast(),
+        north: b.getNorth(),
+        centerLat: (b.getNorth() + b.getSouth()) * 0.5,
+        centerLon: (b.getEast() + b.getWest()) * 0.5,
+      };
+    }
+
+    function shouldSkipMicroMove(newSnap, newBucket) {
+      if (!lastBoundsSnapshot) return false;
+      if (lastBoundsSnapshot.bucket !== newBucket) return false;
+      const dLat = Math.abs(newSnap.centerLat - lastBoundsSnapshot.centerLat);
+      const dLon = Math.abs(newSnap.centerLon - lastBoundsSnapshot.centerLon);
+      return dLat < MIN_CENTER_SHIFT_DEG && dLon < MIN_CENTER_SHIFT_DEG;
+    }
 
     function syncLayerVisibility() {
       if (showHousesEl.checked) map.addLayer(housesLayer); else map.removeLayer(housesLayer);
@@ -88,8 +126,8 @@
       return `${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}`;
     }
 
-    async function fetchJson(url) {
-      const res = await fetch(url);
+    async function fetchJson(url, signal) {
+      const res = await fetch(url, { signal });
       if (!res.ok) {
         const body = await res.text();
         throw new Error(`HTTP ${res.status}: ${body}`);
@@ -112,9 +150,100 @@
         return null;
       }
       if (zoom <= STREET_MEDIUM_ZOOM_MAX) {
-        return "limit=15000&stride=12";
+        return "limit=50000&stride=1";
       }
-      return "limit=50000&stride=4";
+      return "limit=120000&stride=1";
+    }
+
+    function buildViewportKey(snapshot, zoom, housePlan, streetPlan) {
+      return [
+        roundCoord(snapshot.west),
+        roundCoord(snapshot.south),
+        roundCoord(snapshot.east),
+        roundCoord(snapshot.north),
+        zoomBucket(zoom),
+        showHousesEl.checked ? "h1" : "h0",
+        showStreetsEl.checked ? "s1" : "s0",
+        showRegionsEl.checked ? "r1" : "r0",
+        housePlan || "hnone",
+        streetPlan || "snone",
+      ].join("|");
+    }
+
+    function applyStreetFeatures(streets) {
+      streetsLayer.clearLayers();
+      for (const s of streets) {
+        if (!Array.isArray(s.points) || s.points.length === 0) continue;
+        const latLngs = s.points.map(p => [p[0], p[1]]);
+        L.polyline(latLngs, { color: "#cc5500", weight: 3, opacity: 0.8 })
+          .bindPopup(`${s.name || "(unnamed)"} [${s.highway || "unknown"}]`)
+          .addTo(streetsLayer);
+      }
+    }
+
+    function applyRegionFeatures(regions, zoom) {
+      regionsLayer.clearLayers();
+      const weight = zoom <= REGION_CONTEXT_MAX_ZOOM ? 2 : 1;
+      const fillOpacity = zoom <= REGION_CONTEXT_MAX_ZOOM ? 0.12 : 0.05;
+      for (const r of regions) {
+        if (!Array.isArray(r.points) || r.points.length < 3) continue;
+        const latLngs = r.points.map(p => [p[0], p[1]]);
+        L.polygon(latLngs, {
+          color: "#2e8b57",
+          weight,
+          opacity: 0.8,
+          fillColor: "#58c98a",
+          fillOpacity,
+        })
+          .bindPopup(`${r.name || "(unnamed region)"} (admin_level=${r.admin_level ?? -1})`)
+          .addTo(regionsLayer);
+      }
+    }
+
+    function applyHouseFeatures(houses) {
+      housesLayer.clearLayers();
+      for (const h of houses) {
+        const marker = L.circleMarker([h.lat, h.lon], {
+          radius: 3,
+          color: "#0055cc",
+          fillColor: "#2a7fff",
+          fillOpacity: 0.65,
+          weight: 1,
+        });
+        const label = `${h.street || ""} ${h.house_number || ""}, ${h.postcode || ""} ${h.city || ""}`.trim();
+        if (label) marker.bindPopup(label);
+        marker.addTo(housesLayer);
+      }
+    }
+
+    function renderPayload(payload, zoom, housePlan, streetPlan) {
+      if (!showStreetsEl.checked) {
+        streetCountEl.textContent = "Streets: hidden";
+      } else if (streetPlan === null) {
+        streetCountEl.textContent = `Streets: hidden (zoom >= ${STREET_MIN_ZOOM})`;
+        streetsLayer.clearLayers();
+      } else {
+        applyStreetFeatures(payload.streets);
+        streetCountEl.textContent = `Streets: ${payload.streets.length}`;
+      }
+
+      if (!showRegionsEl.checked) {
+        regionCountEl.textContent = "Regions: hidden";
+      } else {
+        applyRegionFeatures(payload.regions, zoom);
+        regionCountEl.textContent = `Regions: ${payload.regions.length}`;
+      }
+
+      if (!showHousesEl.checked) {
+        houseCountEl.textContent = "Houses: hidden";
+        housesLayer.clearLayers();
+      } else if (housePlan === null) {
+        houseCountEl.textContent = `Houses: hidden (zoom > ${HOUSE_LOW_ZOOM_MAX})`;
+        housesLayer.clearLayers();
+      } else {
+        applyHouseFeatures(payload.houses);
+        houseCountEl.textContent = `Houses: ${payload.houses.length}`;
+      }
     }
 
     function scheduleRefresh() {
@@ -128,90 +257,58 @@
     }
 
     async function refreshData() {
-      streetsLayer.clearLayers();
-      regionsLayer.clearLayers();
+      const zoom = map.getZoom();
+      const snapshot = captureBoundsSnapshot();
+      const bucket = zoomBucket(zoom);
 
-      const bbox = encodeURIComponent(bboxParam());
-      const housePlan = showHousesEl.checked ? houseQueryForZoom(map.getZoom()) : null;
-      let houses = [];
-      let houseError = false;
-
-      const streetPlan = showStreetsEl.checked ? streetQueryForZoom(map.getZoom()) : null;
-      if (!showStreetsEl.checked) {
-        streetCountEl.textContent = "Streets: hidden";
-      } else if (streetPlan === null) {
-        streetCountEl.textContent = `Streets: hidden (zoom >= ${STREET_MIN_ZOOM})`;
-      } else {
-        try {
-          const streetsRes = await fetchJson(`${backendBase}/streets?bbox=${bbox}&${streetPlan}`);
-          const streets = streetsRes.streets || [];
-          for (const s of streets) {
-            if (!Array.isArray(s.points) || s.points.length === 0) continue;
-            const latLngs = s.points.map(p => [p[0], p[1]]);
-            L.polyline(latLngs, { color: "#cc5500", weight: 3, opacity: 0.8 })
-              .bindPopup(`${s.name || "(unnamed)"} [${s.highway || "unknown"}]`)
-              .addTo(streetsLayer);
-          }
-          streetCountEl.textContent = `Streets: ${streets.length}`;
-        } catch (err) {
-          console.error(err);
-          streetCountEl.textContent = "Streets: error";
-        }
+      if (shouldSkipMicroMove(snapshot, bucket)) {
+        return;
       }
+
+      const bbox = encodeURIComponent(`${snapshot.west},${snapshot.south},${snapshot.east},${snapshot.north}`);
+      const housePlan = showHousesEl.checked ? houseQueryForZoom(zoom) : null;
+      const streetPlan = showStreetsEl.checked ? streetQueryForZoom(zoom) : null;
+      const cacheKey = buildViewportKey(snapshot, zoom, housePlan, streetPlan);
+
+      if (cacheKey === lastRenderKey) {
+        return;
+      }
+
+      if (viewportCache.has(cacheKey)) {
+        renderPayload(viewportCache.get(cacheKey), zoom, housePlan, streetPlan);
+        lastRenderKey = cacheKey;
+        lastBoundsSnapshot = { ...snapshot, bucket };
+        return;
+      }
+
+      if (activeController) {
+        activeController.abort();
+      }
+      activeController = new AbortController();
+      const signal = activeController.signal;
 
       try {
-        const regionsRes = await fetchJson(`${backendBase}/regions?bbox=${bbox}`);
-        const regions = regionsRes.regions || [];
-        for (const r of regions) {
-          if (!Array.isArray(r.points) || r.points.length < 3) continue;
-          const latLngs = r.points.map(p => [p[0], p[1]]);
-          L.polygon(latLngs, {
-            color: "#2e8b57",
-            weight: 2,
-            opacity: 0.8,
-            fillColor: "#58c98a",
-            fillOpacity: 0.12
-          })
-            .bindPopup(`${r.name || "(unnamed region)"} (admin_level=${r.admin_level ?? -1})`)
-            .addTo(regionsLayer);
-        }
-        regionCountEl.textContent = `Regions: ${regions.length}`;
+        const requests = [];
+        requests.push(showRegionsEl.checked ? fetchJson(`${backendBase}/regions?bbox=${bbox}`, signal) : Promise.resolve({ regions: [] }));
+        requests.push(streetPlan ? fetchJson(`${backendBase}/streets?bbox=${bbox}&${streetPlan}`, signal) : Promise.resolve({ streets: [] }));
+        requests.push(housePlan ? fetchJson(`${backendBase}/houses?bbox=${bbox}&${housePlan}`, signal) : Promise.resolve({ houses: [] }));
+
+        const [regionsRes, streetsRes, housesRes] = await Promise.all(requests);
+        const payload = {
+          regions: regionsRes.regions || [],
+          streets: streetsRes.streets || [],
+          houses: housesRes.houses || [],
+        };
+
+        viewportCache.set(cacheKey, payload);
+        renderPayload(payload, zoom, housePlan, streetPlan);
+        lastRenderKey = cacheKey;
+        lastBoundsSnapshot = { ...snapshot, bucket };
       } catch (err) {
+        if (err?.name === "AbortError") {
+          return;
+        }
         console.error(err);
-        regionCountEl.textContent = "Regions: error";
-      }
-
-      housesLayer.clearLayers();
-      if (!showHousesEl.checked) {
-        houseCountEl.textContent = "Houses: hidden";
-      } else if (housePlan === null) {
-        houseCountEl.textContent = `Houses: hidden (zoom > ${HOUSE_LOW_ZOOM_MAX})`;
-      } else {
-        try {
-          const housesRes = await fetchJson(`${backendBase}/houses?bbox=${bbox}&${housePlan}`);
-          houses = housesRes.houses || [];
-        } catch (err) {
-          console.error(err);
-          houseError = true;
-        }
-      }
-
-      if (houseError) {
-        houseCountEl.textContent = "Houses: error";
-      } else if (showHousesEl.checked && housePlan !== null) {
-        for (const h of houses) {
-          const marker = L.circleMarker([h.lat, h.lon], {
-            radius: 3,
-            color: "#0055cc",
-            fillColor: "#2a7fff",
-            fillOpacity: 0.65,
-            weight: 1
-          });
-          const label = `${h.street || ""} ${h.house_number || ""}, ${h.postcode || ""} ${h.city || ""}`.trim();
-          if (label) marker.bindPopup(label);
-          marker.addTo(housesLayer);
-        }
-        houseCountEl.textContent = `Houses: ${houses.length}`;
       }
     }
 
