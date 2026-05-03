@@ -52,6 +52,9 @@ Current default file used by short commands:
 data/pbf/baden-wuerttemberg-260430.osm.pbf
 ```
 
+You can keep multiple datasets at the same time (for example Stuttgart and Germany).
+Just keep separate cache names for each dataset.
+
 ---
 
 ## 3) What the make commands do
@@ -67,6 +70,28 @@ data/pbf/baden-wuerttemberg-260430.osm.pbf
 
 - `make ui`
   - starts static frontend server (default port 5500)
+
+### Multi-dataset examples
+
+Prepare Stuttgart cache:
+```bash
+make prep PBF=data/pbf/stuttgart-regbez-260416.osm.pbf CACHE=data/cache/stuttgart.bin
+```
+
+Prepare Germany cache:
+```bash
+make prep PBF=data/pbf/germany-latest.osm.pbf CACHE=data/cache/germany.bin
+```
+
+Run server with Stuttgart cache:
+```bash
+make server CACHE=data/cache/stuttgart.bin
+```
+
+Run server with Germany cache:
+```bash
+make server CACHE=data/cache/germany.bin
+```
 
 ---
 
@@ -138,6 +163,8 @@ Also install header-only libs:
 - libosmium
 - protozero
 
+If packages are not available in your default apt repo, install libosmium/protozero manually (or via vcpkg/conan/vendor include path) before building.
+
 ### macOS (Homebrew)
 ```bash
 brew install cmake libosmium protozero
@@ -152,3 +179,14 @@ cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 cmake --build build-release -j
 ./build-release/osm_geocoder --help
 ```
+
+---
+
+## 10) Important repo hygiene for submission
+
+Do **not** commit generated artifacts:
+- `build/`, `build-release/`
+- `.osm.pbf` dataset files
+- `.bin` cache files
+
+Only commit source code + docs.
