@@ -286,6 +286,12 @@
 
     async function refreshData() {
       const zoom = map.getZoom();
+
+      if (zoom >= 16 && !showStreetsEl.checked) {
+        showStreetsEl.checked = true;
+        syncLayerVisibility();
+      }
+
       const snapshot = captureBoundsSnapshot();
       const bucket = zoomBucket(zoom);
 
