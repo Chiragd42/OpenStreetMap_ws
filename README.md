@@ -49,7 +49,7 @@ data/pbf/
 Current default file used by short commands:
 
 ```text
-data/pbf/stuttgart-regbez-260416.osm.pbf
+data/pbf/baden-wuerttemberg-260430.osm.pbf
 ```
 
 ---
@@ -59,7 +59,7 @@ data/pbf/stuttgart-regbez-260416.osm.pbf
 - `make prep`
   - builds release binary
   - parses PBF
-  - writes cache file (default: `data/cache/stuttgart.bin`)
+  - writes cache file (default: `data/cache/baden-wuerttemberg-260430.bin`)
 
 - `make server`
   - loads cache file

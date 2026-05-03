@@ -258,8 +258,32 @@ std::string handle_api_request(
         }
 
         profile.route = "/streets";
-        const auto indices = query_streets_in_bbox(data, *bbox);
-        profile.matched = indices.size();
+        std::size_t stride = 1;
+        std::size_t limit = 0;
+
+        if (const auto stride_param = get_query_param(request.query, "stride"); stride_param.has_value()) {
+            const auto parsed = parse_size_t_query_param(*stride_param);
+            if (!parsed.has_value() || *parsed == 0) {
+                status_code = 400;
+                status_text = "Bad Request";
+                return serialize_error_json("Invalid stride parameter. Expected positive integer");
+            }
+            stride = *parsed;
+        }
+
+        if (const auto limit_param = get_query_param(request.query, "limit"); limit_param.has_value()) {
+            const auto parsed = parse_size_t_query_param(*limit_param);
+            if (!parsed.has_value()) {
+                status_code = 400;
+                status_text = "Bad Request";
+                return serialize_error_json("Invalid limit parameter. Expected non-negative integer");
+            }
+            limit = *parsed;
+        }
+
+        const auto matched = query_streets_in_bbox(data, *bbox);
+        const auto indices = apply_stride_and_limit(matched, stride, limit);
+        profile.matched = matched.size();
         profile.returned = indices.size();
         return serialize_streets_json(data, indices);
     }
