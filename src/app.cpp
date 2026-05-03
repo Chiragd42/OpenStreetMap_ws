@@ -284,13 +284,18 @@ int App::run(const AppOptions& options) const {
     DataStore data;
     ParseStats stats;
     std::string source_description;
+    bool loaded_from_cache = false;
 
     if (!options.load_cache_path.empty()) {
+        const auto t0 = std::chrono::steady_clock::now();
         std::string cache_error;
         if (!load_datastore_cache(options.load_cache_path, data, stats, cache_error)) {
             std::cerr << "Failed to load cache: " << cache_error << '\n';
             return 1;
         }
+        const auto t1 = std::chrono::steady_clock::now();
+        stats.parse_seconds = std::chrono::duration<double>(t1 - t0).count();
+        loaded_from_cache = true;
         source_description = "cache: " + options.load_cache_path;
     } else {
         PbfExtractor extractor;
@@ -335,7 +340,11 @@ int App::run(const AppOptions& options) const {
     std::cout << "Skipped invalid house geometries: " << stats.houses_skipped_invalid_geometry << '\n';
     std::cout << "Unnamed streets: " << stats.unnamed_streets << '\n';
     std::cout << "Skipped complex region relations: " << stats.regions_skipped_complex_relations << '\n';
-    std::cout << "Parse seconds: " << stats.parse_seconds << '\n';
+    if (loaded_from_cache) {
+        std::cout << "Load seconds: " << stats.parse_seconds << '\n';
+    } else {
+        std::cout << "Parse seconds: " << stats.parse_seconds << '\n';
+    }
     std::cout << "Estimated memory bytes: " << stats.estimated_memory_bytes << '\n';
 
     const auto reduced =

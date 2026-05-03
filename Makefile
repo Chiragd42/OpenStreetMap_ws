@@ -25,21 +25,7 @@ prep:
 	fi
 
 server:
-	@start_ts=$$(date +%s); \
-	log_file=/tmp/osm_server.log; \
-	./$(BINARY) --load-cache=$(CACHE) --serve --port=$(PORT) >$$log_file 2>&1 & \
-	server_pid=$$!; \
-	trap 'kill $$server_pid 2>/dev/null || true' INT TERM EXIT; \
-	for i in $$(seq 1 120); do \
-		if curl -fsS "http://127.0.0.1:$(PORT)/stats" >/dev/null 2>&1; then \
-			break; \
-		fi; \
-		sleep 1; \
-	done; \
-	end_ts=$$(date +%s); \
-	elapsed=$$((end_ts - start_ts)); \
-	echo "server load seconds : $${elapsed}s"; \
-	wait $$server_pid
+	./$(BINARY) --load-cache=$(CACHE) --serve --port=$(PORT)
 
 ui:
 	python3 -m http.server $(UI_PORT)
