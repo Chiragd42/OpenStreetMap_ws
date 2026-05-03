@@ -9,15 +9,39 @@ UI_PORT ?= 5500
 
 prep:
 	@start_ts=$$(date +%s); \
-	cmake -S . -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=Release >/dev/null; \
-	cmake --build $(BUILD_DIR) -j >/dev/null; \
-	mkdir -p $$(dirname $(CACHE)); \
-	./$(BINARY) --pbf=$(PBF) --save-cache=$(CACHE) >/tmp/osm_prep.log 2>&1; \
+	log_file=/tmp/osm_prep.log; \
+	: > $$log_file; \
+	echo "[1/3] Setting up environment (cmake + build)..."; \
+	if ! cmake -S . -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=Release >>$$log_file 2>&1; then \
+		echo "prep failed: cmake configure error"; \
+		tail -n 40 $$log_file; \
+		exit 1; \
+	fi; \
+	if ! cmake --build $(BUILD_DIR) -j >>$$log_file 2>&1; then \
+		echo "prep failed: build error"; \
+		tail -n 40 $$log_file; \
+		exit 1; \
+	fi; \
+	if ! mkdir -p $$(dirname $(CACHE)); then \
+		echo "prep failed: could not create cache directory"; \
+		exit 1; \
+	fi; \
+	if [ ! -f "$(PBF)" ]; then \
+		echo "prep failed: PBF file not found: $(PBF)"; \
+		echo "tip: place dataset under data/pbf/ or pass PBF=..."; \
+		exit 1; \
+	fi; \
+	echo "[2/3] Parsing PBF and building cache (this can take several seconds)..."; \
+	if ! ./$(BINARY) --pbf=$(PBF) --save-cache=$(CACHE) >$$log_file 2>&1; then \
+		echo "prep failed: parser/cache build error"; \
+		tail -n 60 $$log_file; \
+		exit 1; \
+	fi; \
 	end_ts=$$(date +%s); \
 	elapsed=$$((end_ts - start_ts)); \
-	parse_line=$$(grep -m1 "^Parse seconds:" /tmp/osm_prep.log || true); \
+	parse_line=$$(grep -m1 "^Parse seconds:" $$log_file || true); \
 	parse_value=$${parse_line#Parse seconds: }; \
-	echo "ready to load server"; \
+	echo "[3/3] ready to load server"; \
 	if [ -n "$$parse_value" ]; then \
 		echo "parse seconds : $${parse_value}s"; \
 	else \

@@ -281,6 +281,7 @@ StreetMergeStats merge_streets_in_place(DataStore& data) {
 } // namespace
 
 int App::run(const AppOptions& options) const {
+    const auto app_start = std::chrono::steady_clock::now();
     DataStore data;
     ParseStats stats;
     std::string source_description;
@@ -341,7 +342,10 @@ int App::run(const AppOptions& options) const {
     std::cout << "Unnamed streets: " << stats.unnamed_streets << '\n';
     std::cout << "Skipped complex region relations: " << stats.regions_skipped_complex_relations << '\n';
     if (loaded_from_cache) {
-        std::cout << "Load seconds: " << stats.parse_seconds << '\n';
+        const auto startup_seconds = std::chrono::duration<double>(
+                                         std::chrono::steady_clock::now() - app_start)
+                                         .count();
+        std::cout << "Load seconds: " << startup_seconds << '\n';
     } else {
         std::cout << "Parse seconds: " << stats.parse_seconds << '\n';
     }
