@@ -16,6 +16,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <map>
 #include <vector>
 
 namespace osm {
@@ -182,6 +183,157 @@ void add_bbox_to_grid(
         bytes += pool.resolve(id).size();
     }
     return bytes;
+}
+
+struct TargetRelation {
+    std::int64_t relation_id{0};
+    std::int32_t admin_level{-1};
+    std::string name;
+    std::vector<std::int64_t> outer_way_ids;
+};
+
+class TargetAdminRelationCollector final : public osmium::handler::Handler {
+public:
+    void relation(const osmium::Relation& rel) {
+        if (!rel.tags().has_tag("boundary", "administrative")) {
+            return;
+        }
+        const auto level = parse_admin_level(rel.tags()).value_or(-1);
+        if (level != 2 && level != 4) {
+            return;
+        }
+
+        TargetRelation tr;
+        tr.relation_id = rel.id();
+        tr.admin_level = level;
+        tr.name = pick_preferred_name(rel.tags());
+        for (const auto& m : rel.members()) {
+            if (m.type() == osmium::item_type::way && std::string_view(m.role()) == "outer") {
+                tr.outer_way_ids.push_back(m.ref());
+            }
+        }
+        if (!tr.outer_way_ids.empty()) {
+            relations.push_back(std::move(tr));
+        }
+    }
+
+    std::vector<TargetRelation> relations;
+};
+
+class WayGeometryCollector final : public osmium::handler::Handler {
+public:
+    explicit WayGeometryCollector(const std::unordered_set<std::int64_t>& target_ids)
+        : target_way_ids(target_ids) {}
+
+    void way(const osmium::Way& way) {
+        if (target_way_ids.find(way.id()) == target_way_ids.end()) {
+            return;
+        }
+        std::vector<GeoPoint> points;
+        points.reserve(way.nodes().size());
+        for (const auto& nr : way.nodes()) {
+            if (!nr.location().valid()) continue;
+            points.push_back(GeoPoint{.lat = static_cast<float>(nr.location().lat_without_check()),
+                                      .lon = static_cast<float>(nr.location().lon_without_check())});
+        }
+        if (points.size() >= 2) {
+            ways.emplace(way.id(), std::move(points));
+        }
+    }
+
+    const std::unordered_set<std::int64_t>& target_way_ids;
+    std::unordered_map<std::int64_t, std::vector<GeoPoint>> ways;
+};
+
+[[nodiscard]] bool same_point(const GeoPoint& a, const GeoPoint& b) {
+    return std::abs(static_cast<double>(a.lat - b.lat)) < 1e-6 &&
+           std::abs(static_cast<double>(a.lon - b.lon)) < 1e-6;
+}
+
+[[nodiscard]] std::vector<GeoPoint> assemble_outer_ring(const std::vector<std::vector<GeoPoint>>& segments) {
+    if (segments.empty()) return {};
+    std::vector<bool> used(segments.size(), false);
+    std::vector<GeoPoint> ring = segments[0];
+    used[0] = true;
+
+    bool progress = true;
+    while (progress) {
+        progress = false;
+        for (std::size_t i = 1; i < segments.size(); ++i) {
+            if (used[i] || segments[i].empty()) continue;
+            const auto& seg = segments[i];
+            if (same_point(ring.back(), seg.front())) {
+                ring.insert(ring.end(), seg.begin() + 1, seg.end());
+                used[i] = true;
+                progress = true;
+            } else if (same_point(ring.back(), seg.back())) {
+                for (std::size_t j = seg.size() - 1; j > 0; --j) ring.push_back(seg[j - 1]);
+                used[i] = true;
+                progress = true;
+            }
+        }
+    }
+
+    if (!ring.empty() && !same_point(ring.front(), ring.back())) {
+        ring.push_back(ring.front());
+    }
+    if (ring.size() < 4) return {};
+    return ring;
+}
+
+void reconstruct_admin_relations_l2_l4(const std::string& input_path, DataStore& data, ParseStats& stats) {
+    using index_type = osmium::index::map::SparseMemArray<osmium::unsigned_object_id_type, osmium::Location>;
+    using location_handler_type = osmium::handler::NodeLocationsForWays<index_type>;
+
+    TargetAdminRelationCollector rel_collector;
+    {
+        osmium::io::Reader rel_reader(input_path, osmium::osm_entity_bits::relation);
+        osmium::apply(rel_reader, rel_collector);
+        rel_reader.close();
+    }
+
+    std::unordered_set<std::int64_t> needed_way_ids;
+    for (const auto& rel : rel_collector.relations) {
+        for (const auto wid : rel.outer_way_ids) needed_way_ids.insert(wid);
+    }
+    if (needed_way_ids.empty()) return;
+
+    index_type index;
+    location_handler_type location_handler(index);
+    location_handler.ignore_errors();
+    WayGeometryCollector way_collector(needed_way_ids);
+
+    {
+        osmium::io::Reader way_reader(input_path, osmium::osm_entity_bits::node | osmium::osm_entity_bits::way);
+        osmium::apply(way_reader, location_handler, way_collector);
+        way_reader.close();
+    }
+
+    std::size_t added = 0;
+    for (const auto& rel : rel_collector.relations) {
+        std::vector<std::vector<GeoPoint>> segments;
+        for (const auto wid : rel.outer_way_ids) {
+            const auto it = way_collector.ways.find(wid);
+            if (it != way_collector.ways.end()) segments.push_back(it->second);
+        }
+        auto ring = assemble_outer_ring(segments);
+        if (ring.size() < 4) continue;
+
+        RegionPolygon region;
+        region.name_id = intern_if_non_empty(data.strings, rel.name);
+        region.admin_level = rel.admin_level;
+        region.is_postal_region = false;
+        region.points_begin = static_cast<std::uint32_t>(data.region_points.size());
+        region.points_count = static_cast<std::uint32_t>(ring.size());
+        region.bbox = bbox_from_points(ring);
+        region.approx_area = polygon_area_approx(ring);
+        data.region_points.insert(data.region_points.end(), ring.begin(), ring.end());
+        data.regions.push_back(region);
+        ++stats.extracted_regions;
+        ++added;
+    }
+
+    std::cout << "[AdminRelationReconstruction] added_regions_l2_l4: " << added << '\n';
 }
 
 class PbfSheet1Handler final : public osmium::handler::Handler {
@@ -396,6 +548,8 @@ ExtractionResult PbfExtractor::extract(const ExtractionConfig& config) const {
     PbfSheet1Handler handler(result.data, result.stats, config.include_regions);
     osmium::apply(reader, location_handler, handler);
     reader.close();
+
+    reconstruct_admin_relations_l2_l4(config.input_pbf_path, result.data, result.stats);
 
     const auto print_level_count = [&](const std::unordered_map<int, std::uint64_t>& m, const int level) {
         const auto it = m.find(level);
