@@ -2,8 +2,8 @@
 
 BUILD_DIR := build-release
 BINARY := $(BUILD_DIR)/osm_geocoder
-PBF ?= data/pbf/baden-wuerttemberg-260430.osm.pbf
-CACHE ?= data/cache/baden-wuerttemberg-260430.bin
+PBF ?= data/pbf/baden-wuerttemberg-260518.osm.pbf
+CACHE ?= data/cache/baden-wuerttemberg-260518.bin
 PORT ?= 8080
 UI_PORT ?= 5500
 
@@ -52,6 +52,7 @@ server:
 	./$(BINARY) --load-cache=$(CACHE) --serve --port=$(PORT)
 
 ui:
+	@echo "Open GUI: http://127.0.0.1:$(UI_PORT)/frontend/index.html"
 	python3 -m http.server $(UI_PORT)
 
 up:

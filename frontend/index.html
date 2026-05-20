@@ -28,6 +28,7 @@
     .panel h3 { margin: 0 0 8px 0; font-size: 14px; }
     .panel .row { margin-bottom: 6px; }
     .muted { color: #555; font-size: 12px; }
+    .warn { color: #b45309; font-size: 12px; margin-top: 6px; }
   </style>
 </head>
 <body>
@@ -44,6 +45,7 @@
     </div>
     <div class="muted">Backend: <code>http://127.0.0.1:8080</code></div>
     <div class="muted">Move/zoom map to trigger bbox queries.</div>
+    <div class="warn" id="tileStatus" style="display:none;">Map tiles are partially blocked on this network/browser. Try disabling strict privacy/ad-block for this page.</div>
   </div>
 
   <script
@@ -69,8 +71,14 @@
     map.fitBounds(germanyBounds);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
-      attribution: "&copy; OpenStreetMap contributors"
-    }).addTo(map);
+      attribution: "&copy; OpenStreetMap contributors",
+      referrerPolicy: "origin"
+    })
+      .on("tileerror", () => {
+        const el = document.getElementById("tileStatus");
+        if (el) el.style.display = "block";
+      })
+      .addTo(map);
 
     const housesLayer = L.layerGroup().addTo(map);
     const streetsLayer = L.layerGroup().addTo(map);
