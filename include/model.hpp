@@ -46,7 +46,11 @@ struct HousePoint {
     StringId street_name_id{kInvalidStringId};
     StringId house_number_id{kInvalidStringId};
     StringId city_id{kInvalidStringId};
+    StringId state_id{kInvalidStringId};
+    StringId country_id{kInvalidStringId};
     StringId postcode_id{kInvalidStringId};
+    std::uint32_t containing_regions_begin{0};
+    std::uint32_t containing_regions_count{0};
 };
 
 struct StreetPolyline {
@@ -61,9 +65,11 @@ struct StreetPolyline {
 struct RegionPolygon {
     StringId name_id{kInvalidStringId};
     std::int32_t admin_level{-1};
+    bool is_postal_region{false};
     std::uint32_t points_begin{0};
     std::uint32_t points_count{0};
     BBox bbox{};
+    double approx_area{0.0};
 };
 
 struct GridCellKey {
@@ -97,6 +103,7 @@ struct DataStore {
     std::vector<GeoPoint> street_points;
     std::vector<RegionPolygon> regions;
     std::vector<GeoPoint> region_points;
+    std::vector<std::uint32_t> house_containing_region_ids;
     SpatialGridIndex grid;
 };
 

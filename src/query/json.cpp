@@ -96,7 +96,15 @@ std::string serialize_stats_json(const ParseStats& stats) {
         << "\"unnamed_streets\":" << stats.unnamed_streets << ','
         << "\"regions_skipped_complex_relations\":" << stats.regions_skipped_complex_relations << ','
         << "\"parse_seconds\":" << stats.parse_seconds << ','
-        << "\"estimated_memory_bytes\":" << stats.estimated_memory_bytes
+        << "\"estimated_memory_bytes\":" << stats.estimated_memory_bytes << ','
+        << "\"houses_with_assigned_city\":" << stats.houses_with_assigned_city << ','
+        << "\"houses_with_assigned_state\":" << stats.houses_with_assigned_state << ','
+        << "\"houses_with_assigned_postcode\":" << stats.houses_with_assigned_postcode << ','
+        << "\"houses_with_assigned_country\":" << stats.houses_with_assigned_country << ','
+        << "\"region_assignment_seconds\":" << stats.region_assignment_seconds << ','
+        << "\"reverse_index_build_seconds\":" << stats.reverse_index_build_seconds << ','
+        << "\"spatial_index_cells\":" << stats.spatial_index_cells << ','
+        << "\"avg_pip_candidates_per_house\":" << stats.avg_pip_candidates_per_house
         << '}';
     return out.str();
 }
@@ -120,6 +128,8 @@ std::string serialize_houses_json(const DataStore& data, const std::vector<std::
         const auto street = escape_json(resolve_string_or_empty(data.strings, h.street_name_id));
         const auto house_no = escape_json(resolve_string_or_empty(data.strings, h.house_number_id));
         const auto city = escape_json(resolve_string_or_empty(data.strings, h.city_id));
+        const auto state = escape_json(resolve_string_or_empty(data.strings, h.state_id));
+        const auto country = escape_json(resolve_string_or_empty(data.strings, h.country_id));
         const auto postcode = escape_json(resolve_string_or_empty(data.strings, h.postcode_id));
 
         out << '{'
@@ -128,7 +138,9 @@ std::string serialize_houses_json(const DataStore& data, const std::vector<std::
             << "\"street\":\"" << street << "\"," 
             << "\"house_number\":\"" << house_no << "\"," 
             << "\"city\":\"" << city << "\"," 
+            << "\"state\":\"" << state << "\"," 
             << "\"postcode\":\"" << postcode << "\""
+            << ",\"country\":\"" << country << "\""
             << '}';
     }
 
@@ -232,6 +244,36 @@ std::string serialize_regions_json(const DataStore& data, const std::vector<std:
 
 std::string serialize_error_json(std::string_view message) {
     return std::string{"{\"error\":\""} + escape_json(message) + "\"}";
+}
+
+std::string serialize_reverse_json(
+    const double query_lat,
+    const double query_lon,
+    const double result_lat,
+    const double result_lon,
+    const double distance_m,
+    const std::string_view street,
+    const std::string_view house_number,
+    const std::string_view city,
+    const std::string_view state,
+    const std::string_view postcode,
+    const std::string_view country) {
+    std::ostringstream out;
+    out << '{'
+        << "\"query\":{\"lat\":" << query_lat << ",\"lon\":" << query_lon << "},"
+        << "\"nearest\":{"
+        << "\"type\":\"house\"," 
+        << "\"lat\":" << result_lat << ','
+        << "\"lon\":" << result_lon << ','
+        << "\"distance_m\":" << distance_m << ','
+        << "\"street\":\"" << escape_json(street) << "\"," 
+        << "\"house_number\":\"" << escape_json(house_number) << "\"," 
+        << "\"city\":\"" << escape_json(city) << "\"," 
+        << "\"state\":\"" << escape_json(state) << "\"," 
+        << "\"postcode\":\"" << escape_json(postcode) << "\"," 
+        << "\"country\":\"" << escape_json(country) << "\""
+        << "}}";
+    return out.str();
 }
 
 } // namespace osm

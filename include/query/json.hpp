@@ -16,6 +16,18 @@ namespace osm {
 [[nodiscard]] std::string serialize_houses_json(const DataStore& data, const std::vector<std::size_t>& indices);
 [[nodiscard]] std::string serialize_streets_json(const DataStore& data, const std::vector<std::size_t>& indices);
 [[nodiscard]] std::string serialize_regions_json(const DataStore& data, const std::vector<std::size_t>& indices);
+[[nodiscard]] std::string serialize_reverse_json(
+    double query_lat,
+    double query_lon,
+    double result_lat,
+    double result_lon,
+    double distance_m,
+    std::string_view street,
+    std::string_view house_number,
+    std::string_view city,
+    std::string_view state,
+    std::string_view postcode,
+    std::string_view country);
 [[nodiscard]] std::string serialize_error_json(std::string_view message);
 
 } // namespace osm

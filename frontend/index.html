@@ -83,6 +83,7 @@
     const housesLayer = L.layerGroup().addTo(map);
     const streetsLayer = L.layerGroup().addTo(map);
     const regionsLayer = L.layerGroup().addTo(map);
+    const reverseLayer = L.layerGroup().addTo(map);
 
     const houseCountEl = document.getElementById("houseCount");
     const streetCountEl = document.getElementById("streetCount");
@@ -96,6 +97,46 @@
     let lastBoundsSnapshot = null;
     const viewportCache = new Map();
     let requestSeq = 0;
+
+    async function runReverseGeocode(lat, lon) {
+      try {
+        const url = `${backendBase}/reverse?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`;
+        const result = await fetchJson(url);
+        const nearest = result.nearest;
+        if (!nearest) return;
+
+        reverseLayer.clearLayers();
+        const clicked = L.circleMarker([lat, lon], {
+          radius: 5,
+          color: "#111827",
+          fillColor: "#111827",
+          fillOpacity: 0.9,
+          weight: 1,
+        }).addTo(reverseLayer);
+
+        const found = L.circleMarker([nearest.lat, nearest.lon], {
+          radius: 6,
+          color: "#7c3aed",
+          fillColor: "#a78bfa",
+          fillOpacity: 0.9,
+          weight: 2,
+        }).addTo(reverseLayer);
+
+        L.polyline([[lat, lon], [nearest.lat, nearest.lon]], {
+          color: "#7c3aed",
+          weight: 1.5,
+          opacity: 0.9,
+          dashArray: "4,4",
+        }).addTo(reverseLayer);
+
+        const addr = `${nearest.street || ""} ${nearest.house_number || ""}, ${nearest.postcode || ""} ${nearest.city || ""}, ${nearest.state || ""}, ${nearest.country || ""}`.replace(/\s+,/g, ",").trim();
+        const popup = `<strong>Reverse Result</strong><br/>Distance: ${Number(nearest.distance_m || 0).toFixed(1)} m<br/>${addr}`;
+        clicked.bindPopup("Clicked location");
+        found.bindPopup(popup).openPopup();
+      } catch (err) {
+        console.error("reverse geocode failed", err);
+      }
+    }
 
     function roundCoord(v) {
       return Number(v.toFixed(BBOX_ROUND_DECIMALS));
@@ -373,6 +414,9 @@
     });
 
     map.on("moveend", scheduleRefresh);
+    map.on("click", (e) => {
+      runReverseGeocode(e.latlng.lat, e.latlng.lng);
+    });
     syncLayerVisibility();
     scheduleRefresh();
   </script>

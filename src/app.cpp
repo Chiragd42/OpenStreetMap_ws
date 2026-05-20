@@ -371,7 +371,8 @@ int App::run(const AppOptions& options) const {
               << "  /stats\n"
               << "  /houses?bbox=minLon,minLat,maxLon,maxLat\n"
               << "  /streets?bbox=minLon,minLat,maxLon,maxLat\n"
-              << "  /regions?bbox=minLon,minLat,maxLon,maxLat\n";
+              << "  /regions?bbox=minLon,minLat,maxLon,maxLat\n"
+              << "  /reverse?lat=<lat>&lon=<lon>\n";
 
     if (options.serve_http) {
         std::cout << "\nStarting local HTTP server on port " << options.port << "..." << '\n';

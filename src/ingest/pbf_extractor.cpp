@@ -8,10 +8,14 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <chrono>
 #include <limits>
 #include <optional>
+#include <iostream>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace osm {
@@ -57,6 +61,13 @@ namespace {
     } catch (...) {
         return std::nullopt;
     }
+}
+
+[[nodiscard]] bool is_postal_region(const osmium::TagList& tags) {
+    if (tags.has_tag("boundary", "postal_code")) {
+        return true;
+    }
+    return tags.has_key("postal_code") || tags.has_key("addr:postcode") || tags.has_key("postcode");
 }
 
 [[nodiscard]] BBox bbox_from_points(const std::vector<GeoPoint>& points) {
@@ -111,6 +122,43 @@ namespace {
     const double cx = cx_acc / (3.0 * cross_sum);
     const double cy = cy_acc / (3.0 * cross_sum);
     return GeoPoint{.lat = static_cast<float>(cy), .lon = static_cast<float>(cx)};
+}
+
+[[nodiscard]] double polygon_area_approx(const std::vector<GeoPoint>& points) {
+    if (points.size() < 3) {
+        return 0.0;
+    }
+    double area2 = 0.0;
+    for (std::size_t i = 0; i < points.size(); ++i) {
+        const auto& a = points[i];
+        const auto& b = points[(i + 1) % points.size()];
+        area2 += static_cast<double>(a.lon) * static_cast<double>(b.lat) -
+                 static_cast<double>(b.lon) * static_cast<double>(a.lat);
+    }
+    return std::abs(area2) * 0.5;
+}
+
+[[nodiscard]] bool point_in_polygon(const GeoPoint& point, const GeoPoint* polygon, const std::size_t n) {
+    if (n < 3) {
+        return false;
+    }
+    const double x = static_cast<double>(point.lon);
+    const double y = static_cast<double>(point.lat);
+    bool inside = false;
+
+    for (std::size_t i = 0, j = n - 1; i < n; j = i++) {
+        const double xi = static_cast<double>(polygon[i].lon);
+        const double yi = static_cast<double>(polygon[i].lat);
+        const double xj = static_cast<double>(polygon[j].lon);
+        const double yj = static_cast<double>(polygon[j].lat);
+
+        const bool intersect = ((yi > y) != (yj > y)) &&
+                               (x < (xj - xi) * (y - yi) / ((yj - yi) + 1e-15) + xi);
+        if (intersect) {
+            inside = !inside;
+        }
+    }
+    return inside;
 }
 
 void add_house_to_grid(SpatialGridIndex& grid, const HousePoint& house, const std::size_t idx) {
@@ -211,7 +259,25 @@ public:
 
         if (relation.tags().has_tag("boundary", "administrative")) {
             ++stats_.regions_skipped_complex_relations;
+            const auto lvl = parse_admin_level(relation.tags()).value_or(-1);
+            ++skipped_admin_relations_by_level_[lvl];
         }
+    }
+
+    [[nodiscard]] const std::unordered_map<int, std::uint64_t>& extracted_admin_regions_by_level() const {
+        return extracted_admin_regions_by_level_;
+    }
+
+    [[nodiscard]] const std::unordered_map<int, std::uint64_t>& skipped_admin_relations_by_level() const {
+        return skipped_admin_relations_by_level_;
+    }
+
+    [[nodiscard]] std::uint64_t postal_regions_extracted() const {
+        return postal_regions_extracted_;
+    }
+
+    [[nodiscard]] const std::unordered_set<std::string>& extracted_region_names() const {
+        return extracted_region_names_;
     }
 
 private:
@@ -283,18 +349,31 @@ private:
         RegionPolygon region;
         region.name_id = intern_if_non_empty(data_.strings, pick_preferred_name(tags));
         region.admin_level = parse_admin_level(tags).value_or(-1);
+        region.is_postal_region = is_postal_region(tags);
         region.points_begin = static_cast<std::uint32_t>(data_.region_points.size());
         region.points_count = static_cast<std::uint32_t>(points.size());
         region.bbox = bbox_from_points(points);
+        region.approx_area = polygon_area_approx(points);
         data_.region_points.insert(data_.region_points.end(), points.begin(), points.end());
         data_.regions.push_back(region);
 
         ++stats_.extracted_regions;
+        ++extracted_admin_regions_by_level_[region.admin_level];
+        if (region.is_postal_region) {
+            ++postal_regions_extracted_;
+        }
+        if (region.name_id != kInvalidStringId) {
+            extracted_region_names_.insert(data_.strings.resolve(region.name_id));
+        }
     }
 
     DataStore& data_;
     ParseStats& stats_;
     bool include_regions_{true};
+    std::unordered_map<int, std::uint64_t> extracted_admin_regions_by_level_;
+    std::unordered_map<int, std::uint64_t> skipped_admin_relations_by_level_;
+    std::uint64_t postal_regions_extracted_{0};
+    std::unordered_set<std::string> extracted_region_names_;
 };
 
 } // namespace
@@ -318,6 +397,30 @@ ExtractionResult PbfExtractor::extract(const ExtractionConfig& config) const {
     osmium::apply(reader, location_handler, handler);
     reader.close();
 
+    const auto print_level_count = [&](const std::unordered_map<int, std::uint64_t>& m, const int level) {
+        const auto it = m.find(level);
+        return it == m.end() ? 0ULL : it->second;
+    };
+
+    std::cout << "\n[AdminDiagnostics]\n"
+              << "  extracted_admin_level_2: " << print_level_count(handler.extracted_admin_regions_by_level(), 2) << '\n'
+              << "  extracted_admin_level_4: " << print_level_count(handler.extracted_admin_regions_by_level(), 4) << '\n'
+              << "  extracted_admin_level_6: " << print_level_count(handler.extracted_admin_regions_by_level(), 6) << '\n'
+              << "  extracted_admin_level_8: " << print_level_count(handler.extracted_admin_regions_by_level(), 8) << '\n'
+              << "  postal_regions_extracted: " << handler.postal_regions_extracted() << '\n'
+              << "  skipped_admin_rel_level_2: " << print_level_count(handler.skipped_admin_relations_by_level(), 2) << '\n'
+              << "  skipped_admin_rel_level_4: " << print_level_count(handler.skipped_admin_relations_by_level(), 4) << '\n'
+              << "  skipped_admin_rel_level_6: " << print_level_count(handler.skipped_admin_relations_by_level(), 6) << '\n'
+              << "  skipped_admin_rel_level_8: " << print_level_count(handler.skipped_admin_relations_by_level(), 8) << '\n';
+
+    const std::array<std::string, 9> key_names = {
+        "Germany", "Deutschland", "Baden-Württemberg", "Stuttgart", "Karlsruhe",
+        "Mannheim", "Freiburg im Breisgau", "Heidelberg", "Ulm"};
+    for (const auto& name : key_names) {
+        std::cout << "  has_region_name[" << name << "]: "
+                  << (handler.extracted_region_names().count(name) > 0 ? "yes" : "no") << '\n';
+    }
+
     for (std::size_t i = 0; i < result.data.houses.size(); ++i) {
         add_house_to_grid(result.data.grid, result.data.houses[i], i);
     }
@@ -335,6 +438,133 @@ ExtractionResult PbfExtractor::extract(const ExtractionConfig& config) const {
             result.data.grid.cell_size_deg,
             i);
     }
+
+    const auto assign_start = std::chrono::steady_clock::now();
+    result.data.house_containing_region_ids.clear();
+    result.data.house_containing_region_ids.reserve(result.data.houses.size() * 2);
+    std::size_t pip_candidate_checks = 0;
+    bool debug_house_logged = false;
+
+    for (std::size_t hi = 0; hi < result.data.houses.size(); ++hi) {
+        auto& house = result.data.houses[hi];
+        const auto key = to_grid_cell(house.lon, house.lat, result.data.grid.cell_size_deg);
+
+        house.containing_regions_begin = static_cast<std::uint32_t>(result.data.house_containing_region_ids.size());
+        house.containing_regions_count = 0;
+
+        const auto it = result.data.grid.region_cells.find(key);
+        const bool is_debug_house =
+            !debug_house_logged &&
+            std::abs(static_cast<double>(house.lat) - 48.78) < 0.005 &&
+            std::abs(static_cast<double>(house.lon) - 9.18) < 0.005;
+        std::size_t debug_bbox_pass = 0;
+        std::size_t debug_pip_pass = 0;
+        if (it == result.data.grid.region_cells.end()) {
+            if (is_debug_house) {
+                std::cout << "\n[HouseAssignmentDebug]\n"
+                          << "  house_lat: " << house.lat << " house_lon: " << house.lon << '\n'
+                          << "  candidate_regions: 0 (cell miss)\n";
+                debug_house_logged = true;
+            }
+            continue;
+        }
+
+        std::unordered_set<std::size_t> dedup;
+        dedup.reserve(it->second.size());
+
+        struct CandidatePick {
+            StringId id{kInvalidStringId};
+            double area{std::numeric_limits<double>::infinity()};
+        };
+        CandidatePick city_pick{};
+        CandidatePick state_pick{};
+        CandidatePick country_pick{};
+        CandidatePick postcode_pick{};
+
+        const GeoPoint hp{.lat = house.lat, .lon = house.lon};
+        for (const auto ridx : it->second) {
+            if (!dedup.insert(ridx).second || ridx >= result.data.regions.size()) {
+                continue;
+            }
+            ++pip_candidate_checks;
+            const auto& region = result.data.regions[ridx];
+            if (!region.bbox.contains(house.lon, house.lat)) {
+                continue;
+            }
+            ++debug_bbox_pass;
+
+            const auto begin = static_cast<std::size_t>(region.points_begin);
+            const auto count = static_cast<std::size_t>(region.points_count);
+            if (begin + count > result.data.region_points.size() || count < 3) {
+                continue;
+            }
+
+            if (!point_in_polygon(hp, result.data.region_points.data() + begin, count)) {
+                continue;
+            }
+            ++debug_pip_pass;
+
+            result.data.house_containing_region_ids.push_back(static_cast<std::uint32_t>(ridx));
+            ++house.containing_regions_count;
+
+            const auto choose = [&](CandidatePick& pick) {
+                if (region.name_id == kInvalidStringId) {
+                    return;
+                }
+                if (region.approx_area < pick.area) {
+                    pick.id = region.name_id;
+                    pick.area = region.approx_area;
+                }
+            };
+
+            if (region.admin_level == 8) choose(city_pick);
+            if (region.admin_level == 4) choose(state_pick);
+            if (region.admin_level == 2) choose(country_pick);
+            if (region.is_postal_region) choose(postcode_pick);
+        }
+
+        if (house.city_id == kInvalidStringId && city_pick.id != kInvalidStringId) {
+            house.city_id = city_pick.id;
+        }
+        if (house.state_id == kInvalidStringId && state_pick.id != kInvalidStringId) {
+            house.state_id = state_pick.id;
+        }
+        if (house.country_id == kInvalidStringId && country_pick.id != kInvalidStringId) {
+            house.country_id = country_pick.id;
+        }
+        if (house.postcode_id == kInvalidStringId && postcode_pick.id != kInvalidStringId) {
+            house.postcode_id = postcode_pick.id;
+        }
+
+        if (is_debug_house) {
+            std::cout << "\n[HouseAssignmentDebug]\n"
+                      << "  house_lat: " << house.lat << " house_lon: " << house.lon << '\n'
+                      << "  candidate_regions: " << dedup.size() << '\n'
+                      << "  bbox_pass: " << debug_bbox_pass << '\n'
+                      << "  pip_pass: " << debug_pip_pass << '\n'
+                      << "  assigned_city: " << (house.city_id == kInvalidStringId ? "<none>" : result.data.strings.resolve(house.city_id)) << '\n'
+                      << "  assigned_state: " << (house.state_id == kInvalidStringId ? "<none>" : result.data.strings.resolve(house.state_id)) << '\n'
+                      << "  assigned_country: " << (house.country_id == kInvalidStringId ? "<none>" : result.data.strings.resolve(house.country_id)) << '\n'
+                      << "  assigned_postcode: " << (house.postcode_id == kInvalidStringId ? "<none>" : result.data.strings.resolve(house.postcode_id)) << '\n';
+            debug_house_logged = true;
+        }
+
+        if (house.city_id != kInvalidStringId) ++result.stats.houses_with_assigned_city;
+        if (house.state_id != kInvalidStringId) ++result.stats.houses_with_assigned_state;
+        if (house.country_id != kInvalidStringId) ++result.stats.houses_with_assigned_country;
+        if (house.postcode_id != kInvalidStringId) ++result.stats.houses_with_assigned_postcode;
+    }
+
+    const auto assign_end = std::chrono::steady_clock::now();
+    result.stats.region_assignment_seconds =
+        std::chrono::duration<double>(assign_end - assign_start).count();
+    result.stats.avg_pip_candidates_per_house =
+        result.data.houses.empty()
+            ? 0.0
+            : static_cast<double>(pip_candidate_checks) / static_cast<double>(result.data.houses.size());
+    result.stats.spatial_index_cells = static_cast<std::uint64_t>(
+        result.data.grid.house_cells.size() + result.data.grid.street_cells.size() + result.data.grid.region_cells.size());
+    result.stats.reverse_index_build_seconds = 0.0;
 
     result.stats.estimated_memory_bytes =
         (result.data.houses.size() * sizeof(HousePoint)) +

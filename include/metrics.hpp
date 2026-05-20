@@ -25,6 +25,15 @@ struct ParseStats {
 
     double parse_seconds{0.0};
     std::size_t estimated_memory_bytes{0};
+
+    std::uint64_t houses_with_assigned_city{0};
+    std::uint64_t houses_with_assigned_state{0};
+    std::uint64_t houses_with_assigned_postcode{0};
+    std::uint64_t houses_with_assigned_country{0};
+    double region_assignment_seconds{0.0};
+    double reverse_index_build_seconds{0.0};
+    std::uint64_t spatial_index_cells{0};
+    double avg_pip_candidates_per_house{0.0};
 };
 
 class Stopwatch {

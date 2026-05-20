@@ -15,9 +15,11 @@
 #include <cstring>
 #include <iostream>
 #include <optional>
+#include <cmath>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
 namespace osm {
@@ -147,6 +149,42 @@ std::optional<std::size_t> parse_size_t_query_param(std::string_view raw) {
     return value;
 }
 
+std::optional<double> parse_double_query_param(std::string_view raw) {
+    if (raw.empty()) {
+        return std::nullopt;
+    }
+    double value = 0.0;
+    const auto* begin = raw.data();
+    const auto* end = raw.data() + raw.size();
+    const auto result = std::from_chars(begin, end, value);
+    if (result.ec != std::errc{} || result.ptr != end) {
+        return std::nullopt;
+    }
+    return value;
+}
+
+double haversine_meters(double lat1_deg, double lon1_deg, double lat2_deg, double lon2_deg) {
+    constexpr double kEarthRadiusM = 6371000.0;
+    constexpr double kDegToRad = 3.14159265358979323846 / 180.0;
+    const auto lat1 = lat1_deg * kDegToRad;
+    const auto lon1 = lon1_deg * kDegToRad;
+    const auto lat2 = lat2_deg * kDegToRad;
+    const auto lon2 = lon2_deg * kDegToRad;
+    const auto dlat = lat2 - lat1;
+    const auto dlon = lon2 - lon1;
+    const auto a = std::sin(dlat * 0.5) * std::sin(dlat * 0.5) +
+                   std::cos(lat1) * std::cos(lat2) * std::sin(dlon * 0.5) * std::sin(dlon * 0.5);
+    const auto c = 2.0 * std::atan2(std::sqrt(a), std::sqrt(1.0 - a));
+    return kEarthRadiusM * c;
+}
+
+double min_ring_distance_meters(const GridCellKey& center, const GridCellKey& cell, float cell_size_deg) {
+    const auto dx_cells = std::max(0, std::abs(cell.x - center.x) - 1);
+    const auto dy_cells = std::max(0, std::abs(cell.y - center.y) - 1);
+    const auto min_deg = static_cast<double>(std::max(dx_cells, dy_cells)) * static_cast<double>(cell_size_deg);
+    return min_deg * 111320.0;
+}
+
 std::vector<std::size_t> apply_stride_and_limit(
     const std::vector<std::size_t>& indices,
     const std::size_t stride,
@@ -197,6 +235,89 @@ std::string handle_api_request(
         status_code = 200;
         status_text = "OK";
         return serialize_stats_json(stats);
+    }
+
+    if (request.path == "/reverse") {
+        profile.route = "/reverse";
+        const auto lat_param = get_query_param(request.query, "lat");
+        const auto lon_param = get_query_param(request.query, "lon");
+        if (!lat_param.has_value() || !lon_param.has_value()) {
+            status_code = 400;
+            status_text = "Bad Request";
+            return serialize_error_json("Missing lat/lon query parameters");
+        }
+
+        const auto lat = parse_double_query_param(*lat_param);
+        const auto lon = parse_double_query_param(*lon_param);
+        if (!lat.has_value() || !lon.has_value()) {
+            status_code = 400;
+            status_text = "Bad Request";
+            return serialize_error_json("Invalid lat/lon values");
+        }
+
+        const auto center = to_grid_cell(*lon, *lat, data.grid.cell_size_deg);
+        constexpr int kMaxRing = 64;
+        double best_distance = std::numeric_limits<double>::infinity();
+        std::size_t best_idx = data.houses.size();
+        std::unordered_set<std::size_t> seen;
+
+        for (int ring = 0; ring <= kMaxRing; ++ring) {
+            for (int dx = -ring; dx <= ring; ++dx) {
+                for (int dy = -ring; dy <= ring; ++dy) {
+                    if (ring > 0 && std::abs(dx) != ring && std::abs(dy) != ring) {
+                        continue;
+                    }
+                    GridCellKey cell{.x = center.x + dx, .y = center.y + dy};
+                    const auto it = data.grid.house_cells.find(cell);
+                    if (it == data.grid.house_cells.end()) {
+                        continue;
+                    }
+                    for (const auto idx : it->second) {
+                        if (idx >= data.houses.size() || !seen.insert(idx).second) {
+                            continue;
+                        }
+                        const auto& h = data.houses[idx];
+                        const auto dist = haversine_meters(*lat, *lon, h.lat, h.lon);
+                        if (dist < best_distance) {
+                            best_distance = dist;
+                            best_idx = idx;
+                        }
+                    }
+                }
+            }
+
+            if (best_idx < data.houses.size()) {
+                const GridCellKey next_ring_probe{.x = center.x + ring + 1, .y = center.y};
+                const auto min_next = min_ring_distance_meters(center, next_ring_probe, data.grid.cell_size_deg);
+                if (min_next > best_distance) {
+                    break;
+                }
+            }
+        }
+
+        if (best_idx >= data.houses.size()) {
+            status_code = 404;
+            status_text = "Not Found";
+            return serialize_error_json("No nearby house found");
+        }
+
+        const auto& h = data.houses[best_idx];
+        profile.matched = seen.size();
+        profile.returned = 1;
+        status_code = 200;
+        status_text = "OK";
+        return serialize_reverse_json(
+            *lat,
+            *lon,
+            h.lat,
+            h.lon,
+            best_distance,
+            h.street_name_id == kInvalidStringId ? std::string_view{} : data.strings.resolve(h.street_name_id),
+            h.house_number_id == kInvalidStringId ? std::string_view{} : data.strings.resolve(h.house_number_id),
+            h.city_id == kInvalidStringId ? std::string_view{} : data.strings.resolve(h.city_id),
+            h.state_id == kInvalidStringId ? std::string_view{} : data.strings.resolve(h.state_id),
+            h.postcode_id == kInvalidStringId ? std::string_view{} : data.strings.resolve(h.postcode_id),
+            h.country_id == kInvalidStringId ? std::string_view{} : data.strings.resolve(h.country_id));
     }
 
     if (request.path == "/houses" || request.path == "/streets" || request.path == "/regions") {
