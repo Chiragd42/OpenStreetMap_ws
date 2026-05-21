@@ -2,6 +2,7 @@
 
 #include <array>
 #include <charconv>
+#include <optional>
 #include <sstream>
 
 namespace osm {
@@ -101,6 +102,8 @@ std::string serialize_stats_json(const ParseStats& stats) {
         << "\"houses_with_assigned_state\":" << stats.houses_with_assigned_state << ','
         << "\"houses_with_assigned_postcode\":" << stats.houses_with_assigned_postcode << ','
         << "\"houses_with_assigned_country\":" << stats.houses_with_assigned_country << ','
+        << "\"country_assigned_by_pip\":" << stats.country_assigned_by_pip << ','
+        << "\"country_assigned_by_fallback\":" << stats.country_assigned_by_fallback << ','
         << "\"region_assignment_seconds\":" << stats.region_assignment_seconds << ','
         << "\"reverse_index_build_seconds\":" << stats.reverse_index_build_seconds << ','
         << "\"spatial_index_cells\":" << stats.spatial_index_cells << ','
