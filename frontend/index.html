@@ -29,6 +29,20 @@
     .panel .row { margin-bottom: 6px; }
     .muted { color: #555; font-size: 12px; }
     .warn { color: #b45309; font-size: 12px; margin-top: 6px; }
+    .btn {
+      border: 1px solid #cbd5e1;
+      background: #f8fafc;
+      color: #0f172a;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .btn.active {
+      background: #7c3aed;
+      border-color: #6d28d9;
+      color: #ffffff;
+    }
   </style>
 </head>
 <body>
@@ -43,8 +57,11 @@
       <label><input type="checkbox" id="showStreets" /> Streets</label>
       <label><input type="checkbox" id="showRegions" checked /> Regions</label>
     </div>
+    <div class="row">
+      <button id="reverseToggleBtn" class="btn" type="button">Reverse Mode: OFF</button>
+    </div>
     <div class="muted">Backend: <code>http://127.0.0.1:8080</code></div>
-    <div class="muted">Move/zoom map to trigger bbox queries.</div>
+    <div class="muted">Move/zoom map to trigger bbox queries. Enable Reverse Mode to click for reverse geocoding.</div>
     <div class="warn" id="tileStatus" style="display:none;">Map tiles are partially blocked on this network/browser. Try disabling strict privacy/ad-block for this page.</div>
   </div>
 
@@ -91,12 +108,21 @@
     const showHousesEl = document.getElementById("showHouses");
     const showStreetsEl = document.getElementById("showStreets");
     const showRegionsEl = document.getElementById("showRegions");
+    const reverseToggleBtnEl = document.getElementById("reverseToggleBtn");
     let refreshTimer = null;
     let activeController = null;
     let lastRenderKey = null;
     let lastBoundsSnapshot = null;
     const viewportCache = new Map();
     let requestSeq = 0;
+    let reverseModeEnabled = false;
+
+    function setReverseMode(enabled) {
+      reverseModeEnabled = enabled;
+      reverseToggleBtnEl.textContent = `Reverse Mode: ${enabled ? "ON" : "OFF"}`;
+      reverseToggleBtnEl.classList.toggle("active", enabled);
+      map.getContainer().style.cursor = enabled ? "crosshair" : "";
+    }
 
     async function runReverseGeocode(lat, lon) {
       try {
@@ -271,8 +297,8 @@
           opacity: lineOpacity,
           fillColor: "#58c98a",
           fillOpacity,
+          interactive: false,
         })
-          .bindPopup(`${r.name || "(unnamed region)"} (admin_level=${r.admin_level ?? -1})`)
           .addTo(regionsLayer);
       }
     }
@@ -412,11 +438,16 @@
       syncLayerVisibility();
       scheduleRefresh();
     });
+    reverseToggleBtnEl.addEventListener("click", () => {
+      setReverseMode(!reverseModeEnabled);
+    });
 
     map.on("moveend", scheduleRefresh);
     map.on("click", (e) => {
+      if (!reverseModeEnabled) return;
       runReverseGeocode(e.latlng.lat, e.latlng.lng);
     });
+    setReverseMode(false);
     syncLayerVisibility();
     scheduleRefresh();
   </script>

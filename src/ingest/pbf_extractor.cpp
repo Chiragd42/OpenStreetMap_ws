@@ -283,10 +283,8 @@ public:
             }
         }
 
-        if (!ring.empty() && !same_point(ring.front(), ring.back())) {
-            ring.push_back(ring.front());
-        }
-        if (ring.size() >= 4) {
+        const bool naturally_closed = !ring.empty() && same_point(ring.front(), ring.back());
+        if (naturally_closed && ring.size() >= 4) {
             rings.push_back(std::move(ring));
         }
     }
@@ -322,13 +320,18 @@ void reconstruct_admin_relations_l2_l4(const std::string& input_path, DataStore&
     }
 
     std::size_t added = 0;
+    std::size_t unclosed_or_invalid_rings = 0;
     for (const auto& rel : rel_collector.relations) {
         std::vector<std::vector<GeoPoint>> segments;
         for (const auto wid : rel.outer_way_ids) {
             const auto it = way_collector.ways.find(wid);
             if (it != way_collector.ways.end()) segments.push_back(it->second);
         }
+        const auto relation_segment_count = segments.size();
         auto rings = assemble_outer_rings(segments);
+        if (rings.size() < relation_segment_count) {
+            unclosed_or_invalid_rings += (relation_segment_count - rings.size());
+        }
         if (rings.empty()) continue;
 
         for (const auto& ring : rings) {
@@ -347,7 +350,8 @@ void reconstruct_admin_relations_l2_l4(const std::string& input_path, DataStore&
         }
     }
 
-    std::cout << "[AdminRelationReconstruction] added_regions_l2_l4: " << added << '\n';
+    std::cout << "[AdminRelationReconstruction] added_regions_l2_l4: " << added
+              << " skipped_unclosed_or_invalid_rings: " << unclosed_or_invalid_rings << '\n';
 }
 
 class PbfSheet1Handler final : public osmium::handler::Handler {

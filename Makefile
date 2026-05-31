@@ -2,8 +2,8 @@
 
 BUILD_DIR := build-release
 BINARY := $(BUILD_DIR)/osm_geocoder
-PBF ?= data/pbf/baden-wuerttemberg-260518.osm.pbf
-CACHE ?= data/cache/baden-wuerttemberg-260518.bin
+PBF ?= data/pbf/baden-wuerttemberg-260519.osm.pbf
+CACHE ?= data/cache/baden-wuerttemberg-260519.bin
 PORT ?= 8080
 UI_PORT ?= 5500
 
