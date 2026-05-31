@@ -12,6 +12,7 @@
 #include <charconv>
 #include <algorithm>
 #include <cerrno>
+#include <csignal>
 #include <cstring>
 #include <iostream>
 #include <optional>
@@ -372,8 +373,57 @@ std::string handle_api_request(
 
         if (request.path == "/regions") {
             profile.route = "/regions";
-            const auto indices = query_regions_in_bbox(data, *bbox);
-            profile.matched = indices.size();
+            std::size_t stride = 1;
+            std::size_t limit = 0;
+            std::optional<std::int32_t> max_admin_level;
+
+            if (const auto stride_param = get_query_param(request.query, "stride"); stride_param.has_value()) {
+                const auto parsed = parse_size_t_query_param(*stride_param);
+                if (!parsed.has_value() || *parsed == 0) {
+                    status_code = 400;
+                    status_text = "Bad Request";
+                    return serialize_error_json("Invalid stride parameter. Expected positive integer");
+                }
+                stride = *parsed;
+            }
+
+            if (const auto limit_param = get_query_param(request.query, "limit"); limit_param.has_value()) {
+                const auto parsed = parse_size_t_query_param(*limit_param);
+                if (!parsed.has_value()) {
+                    status_code = 400;
+                    status_text = "Bad Request";
+                    return serialize_error_json("Invalid limit parameter. Expected non-negative integer");
+                }
+                limit = *parsed;
+            }
+
+            if (const auto max_admin_level_param = get_query_param(request.query, "max_admin_level");
+                max_admin_level_param.has_value()) {
+                const auto parsed = parse_size_t_query_param(*max_admin_level_param);
+                if (!parsed.has_value()) {
+                    status_code = 400;
+                    status_text = "Bad Request";
+                    return serialize_error_json("Invalid max_admin_level parameter. Expected non-negative integer");
+                }
+                max_admin_level = static_cast<std::int32_t>(*parsed);
+            }
+
+            const auto matched = query_regions_in_bbox(data, *bbox);
+            std::vector<std::size_t> filtered = matched;
+            if (max_admin_level.has_value()) {
+                filtered.clear();
+                filtered.reserve(matched.size());
+                for (const auto idx : matched) {
+                    if (idx >= data.regions.size()) continue;
+                    const auto& region = data.regions[idx];
+                    if (region.admin_level >= 0 && region.admin_level <= *max_admin_level) {
+                        filtered.push_back(idx);
+                    }
+                }
+            }
+
+            const auto indices = apply_stride_and_limit(filtered, stride, limit);
+            profile.matched = matched.size();
             profile.returned = indices.size();
             return serialize_regions_json(data, indices);
         }
@@ -436,6 +486,8 @@ int run_http_server(
     const ParseStats& stats,
     const std::uint16_t port,
     const std::size_t max_requests) {
+    std::signal(SIGPIPE, SIG_IGN);
+
     const int server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {
         std::cerr << "Failed to create server socket: " << std::strerror(errno) << '\n';
