@@ -1,0 +1,22 @@
+After setting up the project folder, place the Baden-Württemberg_data_file .osm.pbf inside the data/pbf folder.
+
+
+The ->  make prep command automatically finds the .osm.pbf file, parses it, and creates the required cache. 
+
+First, open a terminal and run-> make prep
+
+Once the preparation is complete, start the backend server with-> make server
+
+Finally, open a second terminal and launch the frontend with-> make ui
+
+open broswer and use url for gui  -> "http://127.0.0.1:5500/frontend/index.html"
+
+
+GUI Instructions: 
+
+- Move or zoom the map to load houses, streets, and regions.
+- To use reverse geocoder, click "Reverse Mode: ON".
+- Then click anywhere on the map.
+- The nearest address will be shown with a marker, line, popup, and result box.
+
+

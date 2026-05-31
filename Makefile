@@ -2,8 +2,11 @@
 
 BUILD_DIR := build-release
 BINARY := $(BUILD_DIR)/osm_geocoder
-PBF ?= data/pbf/baden-wuerttemberg-260519.osm.pbf
-CACHE ?= data/cache/baden-wuerttemberg-260519.bin
+PBF_DIR ?= data/pbf
+CACHE_DIR ?= data/cache
+DETECTED_PBF := $(firstword $(wildcard $(PBF_DIR)/*.osm.pbf))
+PBF ?= $(DETECTED_PBF)
+CACHE ?= $(CACHE_DIR)/$(notdir $(basename $(basename $(PBF)))).bin
 PORT ?= 8080
 UI_PORT ?= 5500
 
@@ -26,11 +29,13 @@ prep:
 		echo "prep failed: could not create cache directory"; \
 		exit 1; \
 	fi; \
-	if [ ! -f "$(PBF)" ]; then \
-		echo "prep failed: PBF file not found: $(PBF)"; \
-		echo "tip: place dataset under data/pbf/ or pass PBF=..."; \
+	if [ -z "$(PBF)" ] || [ ! -f "$(PBF)" ]; then \
+		echo "prep failed: no .osm.pbf file found under $(PBF_DIR)/"; \
+		echo "tip: place dataset under $(PBF_DIR)/ or pass PBF=/path/to/file.osm.pbf"; \
 		exit 1; \
 	fi; \
+	echo "Using PBF   : $(PBF)"; \
+	echo "Using CACHE : $(CACHE)"; \
 	echo "[2/3] Parsing PBF and building cache (this can take several seconds)..."; \
 	if ! ./$(BINARY) --pbf=$(PBF) --save-cache=$(CACHE) >$$log_file 2>&1; then \
 		echo "prep failed: parser/cache build error"; \
@@ -49,6 +54,7 @@ prep:
 	fi
 
 server:
+	@echo "Using CACHE : $(CACHE)"
 	./$(BINARY) --load-cache=$(CACHE) --serve --port=$(PORT)
 
 ui:

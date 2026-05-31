@@ -43,6 +43,20 @@
       border-color: #6d28d9;
       color: #ffffff;
     }
+    .reverse-box {
+      margin-top: 8px;
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid #c4b5fd;
+      background: #f5f3ff;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .reverse-box-title {
+      font-weight: 700;
+      color: #4c1d95;
+      margin-bottom: 4px;
+    }
   </style>
 </head>
 <body>
@@ -59,6 +73,10 @@
     </div>
     <div class="row">
       <button id="reverseToggleBtn" class="btn" type="button">Reverse Mode: OFF</button>
+    </div>
+    <div id="reverseResultBox" class="reverse-box" style="display:none;">
+      <div class="reverse-box-title">Reverse Geocoder</div>
+      <div id="reverseResultText">Click on the map to find nearest address.</div>
     </div>
     <div class="muted">Backend: <code>http://127.0.0.1:8080</code></div>
     <div class="muted">Move/zoom map to trigger bbox queries. Enable Reverse Mode to click for reverse geocoding.</div>
@@ -109,6 +127,8 @@
     const showStreetsEl = document.getElementById("showStreets");
     const showRegionsEl = document.getElementById("showRegions");
     const reverseToggleBtnEl = document.getElementById("reverseToggleBtn");
+    const reverseResultBoxEl = document.getElementById("reverseResultBox");
+    const reverseResultTextEl = document.getElementById("reverseResultText");
     let refreshTimer = null;
     let activeController = null;
     let lastRenderKey = null;
@@ -122,14 +142,22 @@
       reverseToggleBtnEl.textContent = `Reverse Mode: ${enabled ? "ON" : "OFF"}`;
       reverseToggleBtnEl.classList.toggle("active", enabled);
       map.getContainer().style.cursor = enabled ? "crosshair" : "";
+      reverseResultBoxEl.style.display = enabled ? "block" : "none";
+      if (enabled) {
+        reverseResultTextEl.textContent = "Click on the map to find nearest address.";
+      }
     }
 
     async function runReverseGeocode(lat, lon) {
       try {
+        reverseResultTextEl.textContent = "Searching nearest address...";
         const url = `${backendBase}/reverse?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`;
         const result = await fetchJson(url);
         const nearest = result.nearest;
-        if (!nearest) return;
+        if (!nearest) {
+          reverseResultTextEl.textContent = "No nearby address found.";
+          return;
+        }
 
         reverseLayer.clearLayers();
         const clicked = L.circleMarker([lat, lon], {
@@ -157,10 +185,20 @@
 
         const addr = `${nearest.street || ""} ${nearest.house_number || ""}, ${nearest.postcode || ""} ${nearest.city || ""}, ${nearest.state || ""}, ${nearest.country || ""}`.replace(/\s+,/g, ",").trim();
         const popup = `<strong>Reverse Result</strong><br/>Distance: ${Number(nearest.distance_m || 0).toFixed(1)} m<br/>${addr}`;
+        reverseResultTextEl.innerHTML = `
+          <div><strong>Street:</strong> ${nearest.street || "-"}</div>
+          <div><strong>House:</strong> ${nearest.house_number || "-"}</div>
+          <div><strong>Postcode:</strong> ${nearest.postcode || "-"}</div>
+          <div><strong>City:</strong> ${nearest.city || "-"}</div>
+          <div><strong>State:</strong> ${nearest.state || "-"}</div>
+          <div><strong>Country:</strong> ${nearest.country || "-"}</div>
+          <div><strong>Distance:</strong> ${Number(nearest.distance_m || 0).toFixed(1)} m</div>
+        `;
         clicked.bindPopup("Clicked location");
         found.bindPopup(popup).openPopup();
       } catch (err) {
         console.error("reverse geocode failed", err);
+        reverseResultTextEl.textContent = "Reverse lookup failed.";
       }
     }
 
