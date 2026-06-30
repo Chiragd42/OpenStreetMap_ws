@@ -51,6 +51,56 @@ namespace {
     return tags.has_key("addr:housenumber");
 }
 
+[[nodiscard]] const char* first_non_empty_tag(const osmium::TagList& tags, const std::initializer_list<const char*> keys) {
+    for (const auto* key : keys) {
+        if (const char* value = tags.get_value_by_key(key)) {
+            if (*value != '\0') {
+                return value;
+            }
+        }
+    }
+    return nullptr;
+}
+
+[[nodiscard]] std::optional<PoiCategory> classify_poi(const osmium::TagList& tags) {
+    if (tags.has_tag("amenity", "restaurant")) return PoiCategory::Restaurant;
+    if (tags.has_tag("amenity", "cafe")) return PoiCategory::Cafe;
+    if (tags.has_tag("amenity", "fast_food")) return PoiCategory::FastFood;
+    if (tags.has_tag("amenity", "hospital")) return PoiCategory::Hospital;
+    if (tags.has_tag("amenity", "school")) return PoiCategory::School;
+    if (tags.has_tag("railway", "station")) return PoiCategory::Station;
+    if (tags.has_tag("public_transport", "station")) return PoiCategory::Station;
+    if (tags.has_tag("tourism", "hotel")) return PoiCategory::Hotel;
+    if (tags.has_tag("leisure", "park")) return PoiCategory::Park;
+    if (const char* shop = tags.get_value_by_key("shop")) {
+        if (std::string_view(shop) != "no") return PoiCategory::Shop;
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] std::string_view poi_subtype_value(const osmium::TagList& tags, const PoiCategory category) {
+    switch (category) {
+        case PoiCategory::Shop:
+            return tag_value_or_empty(tags, "shop");
+        case PoiCategory::Restaurant:
+        case PoiCategory::Cafe:
+        case PoiCategory::FastFood:
+        case PoiCategory::Hospital:
+        case PoiCategory::School:
+            return tag_value_or_empty(tags, "amenity");
+        case PoiCategory::Park:
+            return tag_value_or_empty(tags, "leisure");
+        case PoiCategory::Hotel:
+            return tag_value_or_empty(tags, "tourism");
+        case PoiCategory::Station:
+            if (const auto railway = tag_value_or_empty(tags, "railway"); !railway.empty()) return railway;
+            return tag_value_or_empty(tags, "public_transport");
+        case PoiCategory::Other:
+            return {};
+    }
+    return {};
+}
+
 [[nodiscard]] std::optional<std::int32_t> parse_admin_level(const osmium::TagList& tags) {
     const char* value = tags.get_value_by_key("admin_level");
     if (value == nullptr) {
@@ -127,6 +177,27 @@ namespace {
     const double cx = cx_acc / (3.0 * cross_sum);
     const double cy = cy_acc / (3.0 * cross_sum);
     return GeoPoint{.lat = static_cast<float>(cy), .lon = static_cast<float>(cx)};
+}
+
+[[nodiscard]] std::optional<GeoPoint> representative_point(const std::vector<GeoPoint>& points) {
+    if (points.empty()) {
+        return std::nullopt;
+    }
+    if (points.size() < 3) {
+        const auto bbox = bbox_from_points(points);
+        return GeoPoint{
+            .lat = static_cast<float>((bbox.min_lat + bbox.max_lat) * 0.5),
+            .lon = static_cast<float>((bbox.min_lon + bbox.max_lon) * 0.5),
+        };
+    }
+    if (const auto centroid = polygon_centroid(points); centroid.has_value()) {
+        return centroid;
+    }
+    const auto bbox = bbox_from_points(points);
+    return GeoPoint{
+        .lat = static_cast<float>((bbox.min_lat + bbox.max_lat) * 0.5),
+        .lon = static_cast<float>((bbox.min_lon + bbox.max_lon) * 0.5),
+    };
 }
 
 [[nodiscard]] double polygon_area_approx(const std::vector<GeoPoint>& points) {
@@ -366,6 +437,8 @@ public:
         }
 
         const auto& tags = node.tags();
+        extract_poi_node(node, tags);
+
         if (!has_address_tags(tags)) {
             return;
         }
@@ -390,8 +463,9 @@ public:
         const bool is_street = tags.has_key("highway");
         const bool is_address_building = tags.has_key("building") && has_address_tags(tags);
         const bool is_region = include_regions_ && tags.has_tag("boundary", "administrative");
+        const bool is_poi = first_non_empty_tag(tags, {"name", "name:de"}) != nullptr && classify_poi(tags).has_value();
 
-        if (!is_street && !is_address_building && !is_region) {
+        if (!is_street && !is_address_building && !is_region && !is_poi) {
             return;
         }
 
@@ -414,6 +488,10 @@ public:
 
         if (is_address_building) {
             extract_building_house(tags, points);
+        }
+
+        if (is_poi) {
+            extract_poi_way(way, tags, points);
         }
 
         if (is_region) {
@@ -451,6 +529,64 @@ public:
     }
 
 private:
+    void extract_poi_node(const osmium::Node& node, const osmium::TagList& tags) {
+        const char* name = first_non_empty_tag(tags, {"name", "name:de"});
+        const auto category = classify_poi(tags);
+        if (!category.has_value()) {
+            return;
+        }
+        if (name == nullptr) {
+            ++stats_.skipped_unnamed_pois;
+            return;
+        }
+
+        PoiPoint poi;
+        poi.osm_id = static_cast<std::uint64_t>(node.id() < 0 ? -node.id() : node.id());
+        poi.osm_type = OsmElementType::Node;
+        poi.lat = static_cast<float>(node.location().lat_without_check());
+        poi.lon = static_cast<float>(node.location().lon_without_check());
+        poi.name_id = intern_if_non_empty(data_.strings, name);
+        poi.category = *category;
+        poi.subtype_id = intern_if_non_empty(data_.strings, poi_subtype_value(tags, poi.category));
+        data_.pois.push_back(poi);
+
+        ++stats_.extracted_pois_total;
+        ++stats_.extracted_poi_nodes;
+        ++stats_.extracted_pois_by_category[static_cast<std::size_t>(poi.category)];
+    }
+
+    void extract_poi_way(const osmium::Way& way, const osmium::TagList& tags, const std::vector<GeoPoint>& points) {
+        const char* name = first_non_empty_tag(tags, {"name", "name:de"});
+        const auto category = classify_poi(tags);
+        if (!category.has_value()) {
+            return;
+        }
+        if (name == nullptr) {
+            ++stats_.skipped_unnamed_pois;
+            return;
+        }
+
+        const auto point = representative_point(points);
+        if (!point.has_value()) {
+            ++stats_.skipped_invalid_poi_geometry;
+            return;
+        }
+
+        PoiPoint poi;
+        poi.osm_id = static_cast<std::uint64_t>(way.id() < 0 ? -way.id() : way.id());
+        poi.osm_type = OsmElementType::Way;
+        poi.lat = point->lat;
+        poi.lon = point->lon;
+        poi.name_id = intern_if_non_empty(data_.strings, name);
+        poi.category = *category;
+        poi.subtype_id = intern_if_non_empty(data_.strings, poi_subtype_value(tags, poi.category));
+        data_.pois.push_back(poi);
+
+        ++stats_.extracted_pois_total;
+        ++stats_.extracted_poi_ways;
+        ++stats_.extracted_pois_by_category[static_cast<std::size_t>(poi.category)];
+    }
+
     void extract_street(const osmium::TagList& tags, const std::vector<GeoPoint>& points) {
         if (points.size() < 2) {
             return;
@@ -605,6 +741,53 @@ ExtractionResult PbfExtractor::extract(const ExtractionConfig& config) const {
             i);
     }
 
+    const auto assign_pois_start = std::chrono::steady_clock::now();
+    result.data.poi_containing_region_ids.clear();
+    result.data.poi_containing_region_ids.reserve(result.data.pois.size() * 2);
+    for (std::size_t pi = 0; pi < result.data.pois.size(); ++pi) {
+        auto& poi = result.data.pois[pi];
+        poi.containing_regions_begin = static_cast<std::uint32_t>(result.data.poi_containing_region_ids.size());
+        poi.containing_regions_count = 0;
+
+        const auto key = to_grid_cell(poi.lon, poi.lat, result.data.grid.cell_size_deg);
+        const auto it = result.data.grid.region_cells.find(key);
+        if (it == result.data.grid.region_cells.end()) {
+            ++result.stats.pois_without_region;
+            continue;
+        }
+
+        std::unordered_set<std::size_t> dedup;
+        dedup.reserve(it->second.size());
+        const GeoPoint pp{.lat = poi.lat, .lon = poi.lon};
+        for (const auto ridx : it->second) {
+            if (!dedup.insert(ridx).second || ridx >= result.data.regions.size()) {
+                continue;
+            }
+            const auto& region = result.data.regions[ridx];
+            if (!region.bbox.contains(poi.lon, poi.lat)) {
+                continue;
+            }
+            const auto begin = static_cast<std::size_t>(region.points_begin);
+            const auto count = static_cast<std::size_t>(region.points_count);
+            if (begin + count > result.data.region_points.size() || count < 3) {
+                continue;
+            }
+            if (!point_in_polygon(pp, result.data.region_points.data() + begin, count)) {
+                continue;
+            }
+            result.data.poi_containing_region_ids.push_back(static_cast<std::uint32_t>(ridx));
+            ++poi.containing_regions_count;
+        }
+
+        if (poi.containing_regions_count > 0) {
+            ++result.stats.pois_assigned_to_region;
+        } else {
+            ++result.stats.pois_without_region;
+        }
+    }
+    result.stats.poi_region_assignment_seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - assign_pois_start).count();
+
     const auto assign_start = std::chrono::steady_clock::now();
     result.data.house_containing_region_ids.clear();
     result.data.house_containing_region_ids.reserve(result.data.houses.size() * 2);
@@ -742,8 +925,10 @@ ExtractionResult PbfExtractor::extract(const ExtractionConfig& config) const {
         (result.data.houses.size() * sizeof(HousePoint)) +
         (result.data.streets.size() * sizeof(StreetPolyline)) +
         (result.data.street_points.size() * sizeof(GeoPoint)) +
+        (result.data.pois.size() * sizeof(PoiPoint)) +
         (result.data.regions.size() * sizeof(RegionPolygon)) +
         (result.data.region_points.size() * sizeof(GeoPoint)) +
+        (result.data.poi_containing_region_ids.size() * sizeof(std::uint32_t)) +
         estimate_string_pool_bytes(result.data.strings);
 
     result.stats.parse_seconds = stopwatch.elapsed_seconds();

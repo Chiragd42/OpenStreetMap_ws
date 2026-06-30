@@ -40,6 +40,36 @@ private:
     std::unordered_map<std::string, StringId> index_by_value_;
 };
 
+enum class PoiCategory : std::uint8_t {
+    Shop,
+    Restaurant,
+    Cafe,
+    FastFood,
+    Park,
+    Hotel,
+    School,
+    Hospital,
+    Station,
+    Other
+};
+
+enum class OsmElementType : std::uint8_t {
+    Node,
+    Way
+};
+
+enum class SearchObjectType : std::uint8_t {
+    House,
+    Street,
+    Poi,
+    Region
+};
+
+struct SearchObjectRef {
+    SearchObjectType type{SearchObjectType::House};
+    std::uint32_t index{0};
+};
+
 struct HousePoint {
     float lat{0.0F};
     float lon{0.0F};
@@ -60,6 +90,18 @@ struct StreetPolyline {
     std::uint32_t points_begin{0};
     std::uint32_t points_count{0};
     BBox bbox{};
+};
+
+struct PoiPoint {
+    std::uint64_t osm_id{0};
+    OsmElementType osm_type{OsmElementType::Node};
+    float lat{0.0F};
+    float lon{0.0F};
+    StringId name_id{kInvalidStringId};
+    StringId subtype_id{kInvalidStringId};
+    PoiCategory category{PoiCategory::Other};
+    std::uint32_t containing_regions_begin{0};
+    std::uint32_t containing_regions_count{0};
 };
 
 struct RegionPolygon {
@@ -101,9 +143,11 @@ struct DataStore {
     std::vector<HousePoint> houses;
     std::vector<StreetPolyline> streets;
     std::vector<GeoPoint> street_points;
+    std::vector<PoiPoint> pois;
     std::vector<RegionPolygon> regions;
     std::vector<GeoPoint> region_points;
     std::vector<std::uint32_t> house_containing_region_ids;
+    std::vector<std::uint32_t> poi_containing_region_ids;
     SpatialGridIndex grid;
 };
 

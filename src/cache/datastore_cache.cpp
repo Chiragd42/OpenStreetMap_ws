@@ -10,7 +10,7 @@ namespace osm {
 namespace {
 
 constexpr std::uint32_t kCacheMagic = 0x4F534D43; // OSMC
-constexpr std::uint32_t kCacheVersion = 2;
+constexpr std::uint32_t kCacheVersion = 3;
 
 template <typename T>
 bool write_pod(std::ofstream& out, const T& value) {
@@ -140,9 +140,11 @@ bool save_datastore_cache(const std::string& path,
         !write_vector_pod(out, data.houses) ||
         !write_vector_pod(out, data.streets) ||
         !write_vector_pod(out, data.street_points) ||
+        !write_vector_pod(out, data.pois) ||
         !write_vector_pod(out, data.regions) ||
         !write_vector_pod(out, data.region_points) ||
         !write_vector_pod(out, data.house_containing_region_ids) ||
+        !write_vector_pod(out, data.poi_containing_region_ids) ||
         !write_pod(out, data.grid.cell_size_deg) ||
         !write_grid_map(out, data.grid.house_cells) ||
         !write_grid_map(out, data.grid.street_cells) ||
@@ -187,9 +189,11 @@ bool load_datastore_cache(const std::string& path,
         !read_vector_pod(in, loaded_data.houses) ||
         !read_vector_pod(in, loaded_data.streets) ||
         !read_vector_pod(in, loaded_data.street_points) ||
+        !read_vector_pod(in, loaded_data.pois) ||
         !read_vector_pod(in, loaded_data.regions) ||
         !read_vector_pod(in, loaded_data.region_points) ||
         !read_vector_pod(in, loaded_data.house_containing_region_ids) ||
+        !read_vector_pod(in, loaded_data.poi_containing_region_ids) ||
         !read_pod(in, loaded_data.grid.cell_size_deg) ||
         !read_grid_map(in, loaded_data.grid.house_cells) ||
         !read_grid_map(in, loaded_data.grid.street_cells) ||

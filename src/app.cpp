@@ -17,6 +17,22 @@ namespace osm {
 
 namespace {
 
+[[nodiscard]] const char* poi_category_name(const PoiCategory category) {
+    switch (category) {
+        case PoiCategory::Shop: return "Shops";
+        case PoiCategory::Restaurant: return "Restaurants";
+        case PoiCategory::Cafe: return "Cafes";
+        case PoiCategory::FastFood: return "Fast food";
+        case PoiCategory::Park: return "Parks";
+        case PoiCategory::Hotel: return "Hotels";
+        case PoiCategory::School: return "Schools";
+        case PoiCategory::Hospital: return "Hospitals";
+        case PoiCategory::Station: return "Stations";
+        case PoiCategory::Other: return "Other";
+    }
+    return "Other";
+}
+
 struct EndpointKey {
     std::int32_t lat_q{0};
     std::int32_t lon_q{0};
@@ -335,6 +351,19 @@ int App::run(const AppOptions& options) const {
     std::cout << "Extracted houses: " << stats.extracted_houses << '\n';
     std::cout << "Extracted streets: " << stats.extracted_streets << '\n';
     std::cout << "Extracted regions: " << stats.extracted_regions << '\n';
+    std::cout << "\n[POI extraction]\n"
+              << "  POI nodes: " << stats.extracted_poi_nodes << '\n'
+              << "  POI ways: " << stats.extracted_poi_ways << '\n'
+              << "  POIs total: " << stats.extracted_pois_total << '\n';
+    for (std::size_t i = 0; i < kPoiCategoryCount; ++i) {
+        std::cout << "  " << poi_category_name(static_cast<PoiCategory>(i)) << ": "
+                  << stats.extracted_pois_by_category[i] << '\n';
+    }
+    std::cout << "  Skipped unnamed POIs: " << stats.skipped_unnamed_pois << '\n'
+              << "  Invalid POI geometries: " << stats.skipped_invalid_poi_geometry << '\n'
+              << "  POIs assigned to region: " << stats.pois_assigned_to_region << '\n'
+              << "  POIs without region: " << stats.pois_without_region << '\n'
+              << "  POI-region assignment seconds: " << stats.poi_region_assignment_seconds << '\n';
     std::cout << "Houses from address nodes: " << stats.houses_from_address_nodes << '\n';
     std::cout << "Houses from polygon centroid: " << stats.houses_from_polygon_centroid << '\n';
     std::cout << "Houses from bbox fallback: " << stats.houses_from_polygon_bbox_fallback << '\n';
