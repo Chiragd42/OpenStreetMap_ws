@@ -243,7 +243,7 @@ std::string handle_api_request(
     if (request.path == "/geocode") {
         profile.route = "/geocode";
         const auto query_param = get_query_param(request.query, "q");
-        if (!query_param.has_value() || query_param->empty()) {
+        if (!query_param.has_value()) {
             status_code = 400;
             status_text = "Bad Request";
             return serialize_error_json("Missing q query parameter");
