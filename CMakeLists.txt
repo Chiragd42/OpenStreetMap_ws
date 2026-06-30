@@ -41,6 +41,7 @@ set(GEOCODER_CORE_SOURCES
     src/ingest/pbf_extractor.cpp
     src/query/bbox_query.cpp
     src/query/json.cpp
+    src/search/geocode_query.cpp
     src/search/search_index.cpp
     src/search/text_normalizer.cpp
     src/server/http_server.cpp
@@ -89,6 +90,15 @@ add_executable(search_index_tests
 )
 
 target_link_libraries(search_index_tests
+    PRIVATE
+        geocoder_core
+)
+
+add_executable(geocode_query_tests
+    tests/geocode_query_tests.cpp
+)
+
+target_link_libraries(geocode_query_tests
     PRIVATE
         geocoder_core
 )

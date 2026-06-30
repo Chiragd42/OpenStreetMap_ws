@@ -2,6 +2,7 @@
 
 #include "cache/datastore_cache.hpp"
 #include "ingest/pbf_extractor.hpp"
+#include "search/geocode_query.hpp"
 #include "search/search_index.hpp"
 #include "search/text_normalizer.hpp"
 #include "server/http_server.hpp"
@@ -11,6 +12,7 @@
 #include <chrono>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -173,6 +175,154 @@ void print_result_sample(const DataStore& data, const std::vector<SearchObjectRe
         print_search_object(data, refs[i]);
     }
     std::cout << "  showing: " << shown << " of " << refs.size() << '\n';
+}
+
+[[nodiscard]] std::string normalized_token_span(const std::vector<std::string>& tokens, const std::size_t begin, const std::size_t end) {
+    std::string out;
+    for (std::size_t i = begin; i < end && i < tokens.size(); ++i) {
+        if (!out.empty()) out.push_back(' ');
+        out += tokens[i];
+    }
+    return out;
+}
+
+[[nodiscard]] std::string first_locality_name(const DataStore& data, const std::vector<std::uint32_t>& locality_indices) {
+    if (locality_indices.empty() || locality_indices.front() >= data.localities.size()) {
+        return {};
+    }
+    return resolve_string_or_empty(data, data.localities[locality_indices.front()].name_id);
+}
+
+void print_geocode_object_line(const DataStore& data, const SearchObjectRef& ref) {
+    switch (ref.type) {
+        case SearchObjectType::House: {
+            if (ref.index >= data.houses.size()) {
+                std::cout << "[House] <invalid>";
+                return;
+            }
+            const auto& house = data.houses[ref.index];
+            std::cout << "[House] " << resolve_string_or_empty(data, house.street_name_id)
+                      << " " << resolve_string_or_empty(data, house.house_number_id);
+            return;
+        }
+        case SearchObjectType::Street: {
+            if (ref.index >= data.streets.size()) {
+                std::cout << "[Street] <invalid>";
+                return;
+            }
+            std::cout << "[Street] " << resolve_string_or_empty(data, data.streets[ref.index].name_id);
+            return;
+        }
+        case SearchObjectType::Poi: {
+            if (ref.index >= data.pois.size()) {
+                std::cout << "[POI] <invalid>";
+                return;
+            }
+            std::cout << "[POI] " << resolve_string_or_empty(data, data.pois[ref.index].name_id);
+            return;
+        }
+        case SearchObjectType::Region: {
+            if (ref.index >= data.regions.size()) {
+                std::cout << "[Region] <invalid>";
+                return;
+            }
+            std::cout << "[Region] " << resolve_string_or_empty(data, data.regions[ref.index].name_id);
+            return;
+        }
+        case SearchObjectType::Locality: {
+            if (ref.index >= data.localities.size()) {
+                std::cout << "[Locality] <invalid>";
+                return;
+            }
+            std::cout << "[Locality] " << resolve_string_or_empty(data, data.localities[ref.index].name_id);
+            return;
+        }
+    }
+}
+
+[[nodiscard]] std::string rank_reason(const search::GeocodeCandidate& candidate) {
+    std::string reason;
+    if (candidate.exact_address_match) reason += "exact address";
+    if (candidate.exact_name_match) {
+        if (!reason.empty()) reason += " + ";
+        reason += "exact name";
+    }
+    if (candidate.shared_admin_level != -1) {
+        if (!reason.empty()) reason += " + ";
+        reason += "shared level " + std::to_string(candidate.shared_admin_level) + " relation";
+    } else if (candidate.locality_recognized) {
+        if (!reason.empty()) reason += " + ";
+        reason += "recognized locality";
+    }
+    if (candidate.unexplained_token_count > 0 && candidate.unexplained_token_count != std::numeric_limits<std::size_t>::max()) {
+        if (!reason.empty()) reason += " + ";
+        reason += std::to_string(candidate.unexplained_token_count) + " unexplained token(s)";
+    }
+    if (reason.empty()) reason = "stable fallback ordering";
+    return reason;
+}
+
+void run_test_geocode_query(const DataStore& data, const search::SearchIndex& index, const std::string& input) {
+    const auto result = search::runGeocodeQuery(data, index, input);
+    std::cout << "\n[TestGeocodeQuery]\n"
+              << "  input: " << result.input << '\n'
+              << "  normalized: " << result.normalized_query << '\n'
+              << "  query_time_ms: " << result.timings.total_ms << '\n'
+              << "  normalization_ms: " << result.timings.normalization_ms << '\n'
+              << "  interpretation_ms: " << result.timings.interpretation_ms << '\n'
+              << "  candidate_lookup_ms: " << result.timings.candidate_lookup_ms << '\n'
+              << "  region_matching_ms: " << result.timings.region_matching_ms << '\n'
+              << "  ranking_ms: " << result.timings.ranking_ms << "\n\n";
+
+    std::cout << "  interpretations:\n";
+    const auto interpretation_limit = std::min<std::size_t>(result.interpretations.size(), 10);
+    for (std::size_t i = 0; i < interpretation_limit; ++i) {
+        const auto& interpretation = result.interpretations[i];
+        std::cout << "    " << (i + 1) << ".\n"
+                  << "      intent: " << search::queryIntentName(interpretation.intent) << '\n';
+        if (!interpretation.locality_indices.empty()) {
+            std::cout << "      locality_span: " << normalized_token_span(interpretation.tokens, interpretation.locality_token_begin, interpretation.locality_token_end) << '\n'
+                      << "      locality_candidates: " << interpretation.locality_indices.size() << '\n'
+                      << "      first_locality: " << first_locality_name(data, interpretation.locality_indices) << '\n';
+        } else {
+            std::cout << "      locality_span: <none>\n"
+                      << "      locality_candidates: 0\n";
+        }
+        std::cout << "      entity: " << interpretation.entity_name << '\n';
+        if (interpretation.intent == search::QueryIntent::Address) {
+            std::cout << "      house_number: " << interpretation.normalized_house_number << '\n'
+                      << "      house_token_span: [" << interpretation.house_token_begin << ", " << interpretation.house_token_end << ")\n"
+                      << "      address_key_found: " << (interpretation.exact_address_key_match ? "true" : "false") << '\n';
+        } else {
+            std::cout << "      exact_entity_name_match: " << (interpretation.exact_entity_name_match ? "true" : "false") << '\n';
+        }
+        std::cout << "      unexplained_tokens: " << interpretation.unexplained_token_count << '\n'
+                  << "      raw_candidates: " << interpretation.raw_candidate_count << '\n';
+    }
+    std::cout << "  interpretations_shown: " << interpretation_limit << " of " << result.interpretations.size() << "\n\n";
+
+    std::cout << "  ranked_results:\n";
+    const auto result_limit = std::min<std::size_t>(result.ranked_candidates.size(), 10);
+    for (std::size_t i = 0; i < result_limit; ++i) {
+        const auto& candidate = result.ranked_candidates[i];
+        std::cout << "    " << (i + 1) << ". ";
+        print_geocode_object_line(data, candidate.ref);
+        std::cout << '\n';
+        if (candidate.ref.type == SearchObjectType::House && candidate.ref.index < data.houses.size()) {
+            const auto& house = data.houses[candidate.ref.index];
+            std::cout << "       city: " << resolve_string_or_empty(data, house.city_id) << '\n'
+                      << "       postcode: " << resolve_string_or_empty(data, house.postcode_id) << '\n';
+        }
+        std::cout << "       exact_address: " << (candidate.exact_address_match ? "true" : "false") << '\n'
+                  << "       exact_name: " << (candidate.exact_name_match ? "true" : "false") << '\n'
+                  << "       locality_recognized: " << (candidate.locality_recognized ? "true" : "false") << '\n'
+                  << "       shared_relation: " << resolve_string_or_empty(data, candidate.shared_relation_name_id) << '\n'
+                  << "       shared_relation_id: " << candidate.shared_relation_id << '\n'
+                  << "       shared_admin_level: " << candidate.shared_admin_level << '\n'
+                  << "       distance_to_locality_m: " << candidate.distance_to_locality_m << '\n'
+                  << "       rank_reason: " << rank_reason(candidate) << '\n';
+    }
+    std::cout << "  ranked_results_shown: " << result_limit << " of " << result.ranked_candidates.size() << '\n';
 }
 
 void run_test_search(const DataStore& data, const search::SearchIndex& index, const std::string& input) {
@@ -697,6 +847,11 @@ int App::run(const AppOptions& options) const {
         for (const auto& example : search_metrics.skipped_region_examples) {
             std::cout << "    " << example << '\n';
         }
+    }
+
+    if (!options.test_geocode_query.empty()) {
+        run_test_geocode_query(data, search_index_build.index, options.test_geocode_query);
+        return 0;
     }
 
     if (!options.test_search_query.empty()) {

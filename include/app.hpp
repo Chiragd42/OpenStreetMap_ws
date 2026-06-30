@@ -15,6 +15,7 @@ struct AppOptions {
     std::string save_cache_path;
     std::string load_cache_path;
     std::string test_search_query;
+    std::string test_geocode_query;
 };
 
 class App {
