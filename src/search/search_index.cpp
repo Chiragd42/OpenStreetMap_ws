@@ -49,6 +49,9 @@ void finalize_index(SearchIndex& index) {
     for (auto& [_, regions] : index.region_name_index) {
         sort_and_dedup(regions);
     }
+    for (auto& [_, localities] : index.locality_name_index) {
+        sort_and_dedup(localities);
+    }
 }
 
 [[nodiscard]] std::size_t posting_count(const std::unordered_map<std::string, std::vector<SearchObjectRef>>& map) {
@@ -89,6 +92,7 @@ void finalize_index(SearchIndex& index) {
         case SearchObjectType::Street: return "Street";
         case SearchObjectType::Poi: return "POI";
         case SearchObjectType::Region: return "Region";
+        case SearchObjectType::Locality: return "Locality";
     }
     return "Unknown";
 }
@@ -153,6 +157,18 @@ SearchIndexBuildResult buildSearchIndex(const DataStore& data) {
         ++metrics.indexed_pois;
     }
 
+    for (std::uint32_t i = 0; i < data.localities.size(); ++i) {
+        const auto& locality = data.localities[i];
+        if (locality.name_id == kInvalidStringId || locality.name_id >= data.strings.size()) continue;
+        const auto normalized = normalizeSearchText(data.strings.resolve(locality.name_id));
+        if (normalized.empty()) continue;
+        const SearchObjectRef ref{.type = SearchObjectType::Locality, .index = i};
+        add_exact_name(index, normalized, ref);
+        add_tokens(index, normalized, ref);
+        index.locality_name_index[normalized].push_back(i);
+        ++metrics.indexed_localities;
+    }
+
     metrics.regions_seen = data.regions.size();
     for (std::uint32_t i = 0; i < data.regions.size(); ++i) {
         const auto& region = data.regions[i];
@@ -189,6 +205,8 @@ SearchIndexBuildResult buildSearchIndex(const DataStore& data) {
     metrics.token_postings = posting_count(index.token_index);
     metrics.region_name_keys = index.region_name_index.size();
     metrics.region_name_postings = region_posting_count(index.region_name_index);
+    metrics.locality_name_keys = index.locality_name_index.size();
+    metrics.locality_name_postings = region_posting_count(index.locality_name_index);
     metrics.largest_token_postings = largest_token_postings(index, 5);
     if (!metrics.largest_token_postings.empty()) {
         metrics.longest_posting_token = metrics.largest_token_postings.front().first;

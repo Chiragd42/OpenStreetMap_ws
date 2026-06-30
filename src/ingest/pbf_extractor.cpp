@@ -101,6 +101,21 @@ namespace {
     return {};
 }
 
+
+[[nodiscard]] std::optional<LocalityType> classify_locality(const osmium::TagList& tags) {
+    const auto place = tag_value_or_empty(tags, "place");
+    if (place == "city") return LocalityType::City;
+    if (place == "town") return LocalityType::Town;
+    if (place == "village") return LocalityType::Village;
+    if (place == "municipality") return LocalityType::Municipality;
+    if (place == "suburb") return LocalityType::Suburb;
+    if (place == "borough") return LocalityType::Borough;
+    if (place == "quarter") return LocalityType::Quarter;
+    if (place == "neighbourhood") return LocalityType::Neighbourhood;
+    if (place == "hamlet") return LocalityType::Hamlet;
+    return std::nullopt;
+}
+
 [[nodiscard]] std::optional<std::int32_t> parse_admin_level(const osmium::TagList& tags) {
     const char* value = tags.get_value_by_key("admin_level");
     if (value == nullptr) {
@@ -274,7 +289,7 @@ public:
             return;
         }
         const auto level = parse_admin_level(rel.tags()).value_or(-1);
-        if (level != 2 && level != 4) {
+        if (level != 2 && level != 4 && level != 6 && level != 8) {
             return;
         }
 
@@ -407,6 +422,7 @@ void reconstruct_admin_relations_l2_l4(const std::string& input_path, DataStore&
 
         for (const auto& ring : rings) {
             RegionPolygon region;
+            region.source_relation_id = static_cast<std::uint64_t>(rel.relation_id < 0 ? -rel.relation_id : rel.relation_id);
             region.name_id = intern_if_non_empty(data.strings, rel.name);
             region.admin_level = rel.admin_level;
             region.is_postal_region = false;
@@ -438,6 +454,7 @@ public:
 
         const auto& tags = node.tags();
         extract_poi_node(node, tags);
+        extract_locality_node(node, tags);
 
         if (!has_address_tags(tags)) {
             return;
@@ -529,6 +546,30 @@ public:
     }
 
 private:
+
+    void extract_locality_node(const osmium::Node& node, const osmium::TagList& tags) {
+        const auto locality_type = classify_locality(tags);
+        if (!locality_type.has_value()) {
+            return;
+        }
+        const char* name = first_non_empty_tag(tags, {"name", "name:de"});
+        if (name == nullptr) {
+            ++stats_.skipped_unnamed_localities;
+            return;
+        }
+
+        LocalityPoint locality;
+        locality.osm_id = static_cast<std::uint64_t>(node.id() < 0 ? -node.id() : node.id());
+        locality.lat = static_cast<float>(node.location().lat_without_check());
+        locality.lon = static_cast<float>(node.location().lon_without_check());
+        locality.name_id = intern_if_non_empty(data_.strings, name);
+        locality.type = *locality_type;
+        data_.localities.push_back(locality);
+
+        ++stats_.extracted_localities_total;
+        ++stats_.extracted_localities_by_type[static_cast<std::size_t>(locality.type)];
+    }
+
     void extract_poi_node(const osmium::Node& node, const osmium::TagList& tags) {
         const char* name = first_non_empty_tag(tags, {"name", "name:de"});
         const auto category = classify_poi(tags);
@@ -788,6 +829,42 @@ ExtractionResult PbfExtractor::extract(const ExtractionConfig& config) const {
     result.stats.poi_region_assignment_seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - assign_pois_start).count();
 
+
+    const auto assign_localities_start = std::chrono::steady_clock::now();
+    result.data.locality_containing_region_ids.clear();
+    result.data.locality_containing_region_ids.reserve(result.data.localities.size() * 2);
+    for (std::size_t li = 0; li < result.data.localities.size(); ++li) {
+        auto& locality = result.data.localities[li];
+        locality.containing_regions_begin = static_cast<std::uint32_t>(result.data.locality_containing_region_ids.size());
+        locality.containing_regions_count = 0;
+
+        const auto key = to_grid_cell(locality.lon, locality.lat, result.data.grid.cell_size_deg);
+        const auto it = result.data.grid.region_cells.find(key);
+        if (it == result.data.grid.region_cells.end()) {
+            ++result.stats.localities_without_region;
+            continue;
+        }
+
+        std::unordered_set<std::size_t> dedup;
+        dedup.reserve(it->second.size());
+        const GeoPoint lp{.lat = locality.lat, .lon = locality.lon};
+        for (const auto ridx : it->second) {
+            if (!dedup.insert(ridx).second || ridx >= result.data.regions.size()) continue;
+            const auto& region = result.data.regions[ridx];
+            if (!region.bbox.contains(locality.lon, locality.lat)) continue;
+            const auto begin = static_cast<std::size_t>(region.points_begin);
+            const auto count = static_cast<std::size_t>(region.points_count);
+            if (begin + count > result.data.region_points.size() || count < 3) continue;
+            if (!point_in_polygon(lp, result.data.region_points.data() + begin, count)) continue;
+            result.data.locality_containing_region_ids.push_back(static_cast<std::uint32_t>(ridx));
+            ++locality.containing_regions_count;
+        }
+        if (locality.containing_regions_count > 0) ++result.stats.localities_assigned_to_region;
+        else ++result.stats.localities_without_region;
+    }
+    result.stats.locality_region_assignment_seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - assign_localities_start).count();
+
     const auto assign_start = std::chrono::steady_clock::now();
     result.data.house_containing_region_ids.clear();
     result.data.house_containing_region_ids.reserve(result.data.houses.size() * 2);
@@ -926,9 +1003,11 @@ ExtractionResult PbfExtractor::extract(const ExtractionConfig& config) const {
         (result.data.streets.size() * sizeof(StreetPolyline)) +
         (result.data.street_points.size() * sizeof(GeoPoint)) +
         (result.data.pois.size() * sizeof(PoiPoint)) +
+        (result.data.localities.size() * sizeof(LocalityPoint)) +
         (result.data.regions.size() * sizeof(RegionPolygon)) +
         (result.data.region_points.size() * sizeof(GeoPoint)) +
         (result.data.poi_containing_region_ids.size() * sizeof(std::uint32_t)) +
+        (result.data.locality_containing_region_ids.size() * sizeof(std::uint32_t)) +
         estimate_string_pool_bytes(result.data.strings);
 
     result.stats.parse_seconds = stopwatch.elapsed_seconds();

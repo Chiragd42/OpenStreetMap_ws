@@ -8,6 +8,7 @@
 namespace osm {
 
 constexpr std::size_t kPoiCategoryCount = 10;
+constexpr std::size_t kLocalityTypeCount = 10;
 
 struct ParseStats {
     std::uint64_t processed_nodes{0};
@@ -26,6 +27,13 @@ struct ParseStats {
     std::uint64_t pois_assigned_to_region{0};
     std::uint64_t pois_without_region{0};
     double poi_region_assignment_seconds{0.0};
+
+    std::uint64_t extracted_localities_total{0};
+    std::array<std::uint64_t, kLocalityTypeCount> extracted_localities_by_type{};
+    std::uint64_t skipped_unnamed_localities{0};
+    std::uint64_t localities_assigned_to_region{0};
+    std::uint64_t localities_without_region{0};
+    double locality_region_assignment_seconds{0.0};
 
     std::uint64_t houses_from_address_nodes{0};
     std::uint64_t houses_from_polygon_centroid{0};

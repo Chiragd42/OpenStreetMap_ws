@@ -62,7 +62,8 @@ enum class SearchObjectType : std::uint8_t {
     House,
     Street,
     Poi,
-    Region
+    Region,
+    Locality
 };
 
 struct SearchObjectRef {
@@ -115,7 +116,31 @@ struct PoiPoint {
     std::uint32_t containing_regions_count{0};
 };
 
+enum class LocalityType : std::uint8_t {
+    City,
+    Town,
+    Village,
+    Municipality,
+    Suburb,
+    Borough,
+    Quarter,
+    Neighbourhood,
+    Hamlet,
+    Other
+};
+
+struct LocalityPoint {
+    std::uint64_t osm_id{0};
+    float lat{0.0F};
+    float lon{0.0F};
+    StringId name_id{kInvalidStringId};
+    LocalityType type{LocalityType::Other};
+    std::uint32_t containing_regions_begin{0};
+    std::uint32_t containing_regions_count{0};
+};
+
 struct RegionPolygon {
+    std::uint64_t source_relation_id{0};
     StringId name_id{kInvalidStringId};
     std::int32_t admin_level{-1};
     bool is_postal_region{false};
@@ -155,10 +180,12 @@ struct DataStore {
     std::vector<StreetPolyline> streets;
     std::vector<GeoPoint> street_points;
     std::vector<PoiPoint> pois;
+    std::vector<LocalityPoint> localities;
     std::vector<RegionPolygon> regions;
     std::vector<GeoPoint> region_points;
     std::vector<std::uint32_t> house_containing_region_ids;
     std::vector<std::uint32_t> poi_containing_region_ids;
+    std::vector<std::uint32_t> locality_containing_region_ids;
     SpatialGridIndex grid;
 };
 

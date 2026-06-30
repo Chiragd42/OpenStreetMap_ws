@@ -61,6 +61,22 @@ namespace {
     return "unknown";
 }
 
+[[nodiscard]] const char* locality_type_label(const LocalityType type) {
+    switch (type) {
+        case LocalityType::City: return "City";
+        case LocalityType::Town: return "Town";
+        case LocalityType::Village: return "Village";
+        case LocalityType::Municipality: return "Municipality";
+        case LocalityType::Suburb: return "Suburb";
+        case LocalityType::Borough: return "Borough";
+        case LocalityType::Quarter: return "Quarter";
+        case LocalityType::Neighbourhood: return "Neighbourhood";
+        case LocalityType::Hamlet: return "Hamlet";
+        case LocalityType::Other: return "Other";
+    }
+    return "Other";
+}
+
 [[nodiscard]] std::string resolve_string_or_empty(const DataStore& data, const StringId id) {
     if (id == kInvalidStringId || id >= data.strings.size()) {
         return {};
@@ -105,6 +121,32 @@ void print_search_object(const DataStore& data, const SearchObjectRef& ref) {
             std::cout << "    [Region] " << resolve_string_or_empty(data, region.name_id)
                       << " | admin_level " << region.admin_level
                       << " | index " << ref.index << "\n";
+            return;
+        }
+        case SearchObjectType::Locality: {
+            if (ref.index >= data.localities.size()) {
+                std::cout << "    [Locality] <invalid index " << ref.index << ">\n";
+                return;
+            }
+            const auto& locality = data.localities[ref.index];
+            std::cout << "    [Locality] " << resolve_string_or_empty(data, locality.name_id) << "\n"
+                      << "      type: " << locality_type_label(locality.type) << "\n"
+                      << "      osm_id: " << locality.osm_id << "\n"
+                      << "      lat: " << locality.lat << "\n"
+                      << "      lon: " << locality.lon << "\n"
+                      << "      containing_regions: " << locality.containing_regions_count << "\n";
+            const auto begin = static_cast<std::size_t>(locality.containing_regions_begin);
+            const auto count = static_cast<std::size_t>(locality.containing_regions_count);
+            for (std::size_t i = 0; i < std::min<std::size_t>(count, 5); ++i) {
+                const auto ridx = static_cast<std::size_t>(data.locality_containing_region_ids[begin + i]);
+                if (ridx < data.regions.size()) {
+                    const auto& region = data.regions[ridx];
+                    std::cout << "        polygon_index: " << ridx
+                              << " relation_id: " << region.source_relation_id
+                              << " name: " << resolve_string_or_empty(data, region.name_id)
+                              << " admin_level: " << region.admin_level << "\n";
+                }
+            }
             return;
         }
         case SearchObjectType::House:
@@ -507,6 +549,17 @@ int App::run(const AppOptions& options) const {
               << "  POIs assigned to region: " << stats.pois_assigned_to_region << '\n'
               << "  POIs without region: " << stats.pois_without_region << '\n'
               << "  POI-region assignment seconds: " << stats.poi_region_assignment_seconds << '\n';
+    std::cout << "\n[Localities]\n"
+              << "  total: " << stats.extracted_localities_total << '\n';
+    for (std::size_t i = 0; i < kLocalityTypeCount; ++i) {
+        std::cout << "  " << locality_type_label(static_cast<LocalityType>(i)) << ": "
+                  << stats.extracted_localities_by_type[i] << '\n';
+    }
+    std::cout << "  skipped_unnamed: " << stats.skipped_unnamed_localities << '\n'
+              << "  assigned_to_region: " << stats.localities_assigned_to_region << '\n'
+              << "  without_region: " << stats.localities_without_region << '\n'
+              << "  assignment_seconds: " << stats.locality_region_assignment_seconds << '\n';
+
     std::cout << "Houses from address nodes: " << stats.houses_from_address_nodes << '\n';
     std::cout << "Houses from polygon centroid: " << stats.houses_from_polygon_centroid << '\n';
     std::cout << "Houses from bbox fallback: " << stats.houses_from_polygon_bbox_fallback << '\n';
@@ -544,6 +597,7 @@ int App::run(const AppOptions& options) const {
               << "  skipped_unnamed_streets: " << search_metrics.skipped_unnamed_streets << '\n'
               << "  indexed_pois: " << search_metrics.indexed_pois << '\n'
               << "  indexed_regions: " << search_metrics.indexed_regions << '\n'
+              << "  indexed_localities: " << search_metrics.indexed_localities << '\n'
               << "  skipped_pois_invalid_name_id: " << search_metrics.skipped_pois_invalid_name_id << '\n'
               << "  skipped_pois_empty_normalized_name: " << search_metrics.skipped_pois_empty_normalized_name << '\n'
               << "  regions_seen: " << search_metrics.regions_seen << '\n'
@@ -555,6 +609,8 @@ int App::run(const AppOptions& options) const {
               << "  token_postings: " << search_metrics.token_postings << '\n'
               << "  region_name_keys: " << search_metrics.region_name_keys << '\n'
               << "  region_name_postings: " << search_metrics.region_name_postings << '\n'
+              << "  locality_name_keys: " << search_metrics.locality_name_keys << '\n'
+              << "  locality_name_postings: " << search_metrics.locality_name_postings << '\n'
               << "  longest_posting_token: " << search_metrics.longest_posting_token << '\n'
               << "  longest_posting_list: " << search_metrics.longest_posting_list << '\n'
               << "  build_seconds: " << search_metrics.build_seconds << '\n';
