@@ -52,6 +52,9 @@ void finalize_index(SearchIndex& index) {
     for (auto& [_, localities] : index.locality_name_index) {
         sort_and_dedup(localities);
     }
+    for (auto& [_, postings] : index.address_index) {
+        sort_and_dedup(postings);
+    }
 }
 
 [[nodiscard]] std::size_t posting_count(const std::unordered_map<std::string, std::vector<SearchObjectRef>>& map) {
@@ -105,12 +108,45 @@ void add_limited_example(std::vector<std::string>& examples, std::string value, 
 
 } // namespace
 
+std::string makeAddressKey(std::string_view normalized_street, std::string_view normalized_house_number) {
+    if (normalized_street.empty() || normalized_house_number.empty()) {
+        return {};
+    }
+    std::string key;
+    key.reserve(normalized_street.size() + normalized_house_number.size() + 1);
+    key.append(normalized_street);
+    key.push_back('|');
+    key.append(normalized_house_number);
+    return key;
+}
+
 SearchIndexBuildResult buildSearchIndex(const DataStore& data) {
     const auto start = std::chrono::steady_clock::now();
 
     SearchIndexBuildResult result;
     auto& index = result.index;
     auto& metrics = result.metrics;
+
+    for (std::uint32_t i = 0; i < data.houses.size(); ++i) {
+        const auto& house = data.houses[i];
+        if (house.street_name_id == kInvalidStringId || house.street_name_id >= data.strings.size()) {
+            ++metrics.skipped_addresses_missing_street;
+            continue;
+        }
+        if (house.house_number_id == kInvalidStringId || house.house_number_id >= data.strings.size()) {
+            ++metrics.skipped_addresses_missing_house_number;
+            continue;
+        }
+        const auto normalized_street = normalizeSearchText(data.strings.resolve(house.street_name_id));
+        const auto normalized_house_number = normalizeHouseNumber(data.strings.resolve(house.house_number_id));
+        const auto address_key = makeAddressKey(normalized_street, normalized_house_number);
+        if (address_key.empty()) {
+            ++metrics.skipped_addresses_empty_normalized_key;
+            continue;
+        }
+        index.address_index[address_key].push_back(SearchObjectRef{.type = SearchObjectType::House, .index = i});
+        ++metrics.indexed_addresses;
+    }
 
     for (std::uint32_t i = 0; i < data.streets.size(); ++i) {
         const auto& street = data.streets[i];
@@ -199,6 +235,8 @@ SearchIndexBuildResult buildSearchIndex(const DataStore& data) {
 
     finalize_index(index);
 
+    metrics.address_keys = index.address_index.size();
+    metrics.address_postings = posting_count(index.address_index);
     metrics.exact_name_keys = index.exact_name_index.size();
     metrics.exact_name_postings = posting_count(index.exact_name_index);
     metrics.token_keys = index.token_index.size();

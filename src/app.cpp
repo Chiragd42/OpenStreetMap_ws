@@ -149,9 +149,21 @@ void print_search_object(const DataStore& data, const SearchObjectRef& ref) {
             }
             return;
         }
-        case SearchObjectType::House:
-            std::cout << "    [House] index " << ref.index << " (not indexed in Phase 2C)\n";
+        case SearchObjectType::House: {
+            if (ref.index >= data.houses.size()) {
+                std::cout << "    [House] <invalid index " << ref.index << ">\n";
+                return;
+            }
+            const auto& house = data.houses[ref.index];
+            std::cout << "    [House] " << resolve_string_or_empty(data, house.street_name_id)
+                      << " " << resolve_string_or_empty(data, house.house_number_id) << "\n"
+                      << "      city: " << resolve_string_or_empty(data, house.city_id) << "\n"
+                      << "      postcode: " << resolve_string_or_empty(data, house.postcode_id) << "\n"
+                      << "      lat: " << house.lat << "\n"
+                      << "      lon: " << house.lon << "\n"
+                      << "      containing_regions: " << house.containing_regions_count << "\n";
             return;
+        }
     }
 }
 
@@ -181,6 +193,42 @@ void run_test_search(const DataStore& data, const search::SearchIndex& index, co
         std::cout << "    - " << token << '\n';
     }
 
+    std::vector<SearchObjectRef> address_matches;
+    if (!tokens.empty()) {
+        for (std::size_t i = tokens.size(); i > 0; --i) {
+            const auto& candidate = tokens[i - 1];
+            const bool has_digit = std::any_of(candidate.begin(), candidate.end(), [](const char c) {
+                return c >= '0' && c <= '9';
+            });
+            if (!has_digit) continue;
+
+            std::string house_number_raw = candidate;
+            std::size_t extra_house_token = tokens.size();
+            if (i < tokens.size() && tokens[i].size() == 1 && tokens[i][0] >= 'a' && tokens[i][0] <= 'z') {
+                house_number_raw += tokens[i];
+                extra_house_token = i;
+            }
+            const auto house_number = search::normalizeHouseNumber(house_number_raw);
+            std::string street_candidate;
+            for (std::size_t j = 0; j < tokens.size(); ++j) {
+                if (j == i - 1 || j == extra_house_token) continue;
+                if (!street_candidate.empty()) street_candidate.push_back(' ');
+                street_candidate += tokens[j];
+            }
+            const auto address_key = search::makeAddressKey(street_candidate, house_number);
+            if (!address_key.empty()) {
+                if (const auto it = index.address_index.find(address_key); it != index.address_index.end()) {
+                    address_matches = it->second;
+                }
+                std::cout << "  address_lookup:\n"
+                          << "    street: " << street_candidate << "\n"
+                          << "    house_number: " << house_number << "\n"
+                          << "    matches: " << address_matches.size() << "\n\n";
+            }
+            break;
+        }
+    }
+
     std::vector<SearchObjectRef> exact_matches;
     if (const auto it = index.exact_name_index.find(normalized); it != index.exact_name_index.end()) {
         exact_matches = it->second;
@@ -208,6 +256,11 @@ void run_test_search(const DataStore& data, const search::SearchIndex& index, co
     }
 
     std::cout << "\n  token_intersection_matches: " << token_intersection.size() << "\n";
+
+    if (!address_matches.empty()) {
+        std::cout << "\n  first_address_results:\n";
+        print_result_sample(data, address_matches, 5);
+    }
 
     std::cout << "\n  first_exact_results:\n";
     print_result_sample(data, exact_matches, 5);
@@ -598,11 +651,17 @@ int App::run(const AppOptions& options) const {
               << "  indexed_pois: " << search_metrics.indexed_pois << '\n'
               << "  indexed_regions: " << search_metrics.indexed_regions << '\n'
               << "  indexed_localities: " << search_metrics.indexed_localities << '\n'
+              << "  indexed_addresses: " << search_metrics.indexed_addresses << '\n'
+              << "  skipped_addresses_missing_street: " << search_metrics.skipped_addresses_missing_street << '\n'
+              << "  skipped_addresses_missing_house_number: " << search_metrics.skipped_addresses_missing_house_number << '\n'
+              << "  skipped_addresses_empty_normalized_key: " << search_metrics.skipped_addresses_empty_normalized_key << '\n'
               << "  skipped_pois_invalid_name_id: " << search_metrics.skipped_pois_invalid_name_id << '\n'
               << "  skipped_pois_empty_normalized_name: " << search_metrics.skipped_pois_empty_normalized_name << '\n'
               << "  regions_seen: " << search_metrics.regions_seen << '\n'
               << "  regions_skipped_invalid_name_id: " << search_metrics.regions_skipped_invalid_name_id << '\n'
               << "  regions_skipped_empty_normalized_name: " << search_metrics.regions_skipped_empty_normalized_name << '\n'
+              << "  address_keys: " << search_metrics.address_keys << '\n'
+              << "  address_postings: " << search_metrics.address_postings << '\n'
               << "  exact_name_keys: " << search_metrics.exact_name_keys << '\n'
               << "  exact_name_postings: " << search_metrics.exact_name_postings << '\n'
               << "  token_keys: " << search_metrics.token_keys << '\n'

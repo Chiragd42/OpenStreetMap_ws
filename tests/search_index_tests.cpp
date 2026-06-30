@@ -34,6 +34,8 @@ int main() {
     const auto koenig = data.strings.intern("Königstraße");
     const auto oberer = data.strings.intern("Oberer Grundweg");
     const auto stuttgart = data.strings.intern("Stuttgart");
+    const auto bahnhof = data.strings.intern("Bahnhofstraße");
+    const auto house10 = data.strings.intern("10 A");
 
     osm::StreetPolyline unnamed;
     unnamed.is_unnamed = true;
@@ -61,6 +63,11 @@ int main() {
     r1.name_id = stuttgart;
     data.regions.push_back(r1);
 
+    osm::HousePoint h1;
+    h1.street_name_id = bahnhof;
+    h1.house_number_id = house10;
+    data.houses.push_back(h1);
+
     auto built = osm::search::buildSearchIndex(data);
     const auto& index = built.index;
     const auto& metrics = built.metrics;
@@ -69,6 +76,7 @@ int main() {
     expect_eq_size(metrics.skipped_unnamed_streets, 1, "skipped unnamed street");
     expect_eq_size(metrics.indexed_pois, 2, "indexed pois");
     expect_eq_size(metrics.indexed_regions, 1, "indexed regions");
+    expect_eq_size(metrics.indexed_addresses, 1, "indexed address");
 
     expect_eq_size(index.exact_name_index.at("burger king").size(), 2, "exact burger king postings");
     expect_eq_size(index.exact_name_index.at("koenigstrasse").size(), 1, "exact koenigstrasse postings");
@@ -77,6 +85,8 @@ int main() {
     expect_eq_size(index.token_index.at("oberer").size(), 1, "oberer token postings");
     expect_eq_size(index.token_index.at("grundweg").size(), 1, "grundweg token postings");
     expect_eq_size(index.region_name_index.at("stuttgart").size(), 1, "stuttgart region postings");
+    const auto address_key = osm::search::makeAddressKey("bahnhofstrasse", "10a");
+    expect_eq_size(index.address_index.at(address_key).size(), 1, "address postings");
 
     const auto intersection = osm::search::intersectPostingLists({index.token_index.at("king"), index.token_index.at("burger")});
     expect_eq_size(intersection.size(), 2, "token intersection order independent");

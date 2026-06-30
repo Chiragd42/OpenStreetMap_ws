@@ -16,6 +16,7 @@ struct SearchIndex {
     std::unordered_map<std::string, std::vector<SearchObjectRef>> token_index;
     std::unordered_map<std::string, std::vector<std::uint32_t>> region_name_index;
     std::unordered_map<std::string, std::vector<std::uint32_t>> locality_name_index;
+    std::unordered_map<std::string, std::vector<SearchObjectRef>> address_index;
 };
 
 struct SearchIndexMetrics {
@@ -24,11 +25,17 @@ struct SearchIndexMetrics {
     std::size_t indexed_pois{0};
     std::size_t indexed_regions{0};
     std::size_t indexed_localities{0};
+    std::size_t indexed_addresses{0};
+    std::size_t skipped_addresses_missing_street{0};
+    std::size_t skipped_addresses_missing_house_number{0};
+    std::size_t skipped_addresses_empty_normalized_key{0};
     std::size_t skipped_pois_invalid_name_id{0};
     std::size_t skipped_pois_empty_normalized_name{0};
     std::size_t regions_seen{0};
     std::size_t regions_skipped_invalid_name_id{0};
     std::size_t regions_skipped_empty_normalized_name{0};
+    std::size_t address_keys{0};
+    std::size_t address_postings{0};
     std::size_t exact_name_keys{0};
     std::size_t exact_name_postings{0};
     std::size_t token_keys{0};
@@ -51,6 +58,7 @@ struct SearchIndexBuildResult {
     SearchIndexMetrics metrics;
 };
 
+[[nodiscard]] std::string makeAddressKey(std::string_view normalized_street, std::string_view normalized_house_number);
 [[nodiscard]] SearchIndexBuildResult buildSearchIndex(const DataStore& data);
 [[nodiscard]] std::vector<SearchObjectRef> intersectPostingLists(const std::vector<std::vector<SearchObjectRef>>& postings);
 
