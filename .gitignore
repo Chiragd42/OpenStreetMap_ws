@@ -1,4 +1,10 @@
 build/
+build-release/
+.DS_Store
+**/.DS_Store
+*.bin
+data/cache/
+data/pbf/*.osm.pbf
 data/gpkg/*.gpkg
 !data/gpkg/.gitkeep
 !data/pbf/.gitkeep
