@@ -864,11 +864,12 @@ int App::run(const AppOptions& options) const {
               << "  /houses?bbox=minLon,minLat,maxLon,maxLat\n"
               << "  /streets?bbox=minLon,minLat,maxLon,maxLat\n"
               << "  /regions?bbox=minLon,minLat,maxLon,maxLat\n"
+              << "  /geocode?q=<address-or-place>\n"
               << "  /reverse?lat=<lat>&lon=<lon>\n";
 
     if (options.serve_http) {
         std::cout << "\nStarting local HTTP server on port " << options.port << "..." << '\n';
-        return run_http_server(data, stats, options.port, options.max_requests);
+        return run_http_server(data, search_index_build.index, stats, options.port, options.max_requests);
     }
 
     std::cout << "\nRun with --serve to expose local bbox query endpoints." << '\n';

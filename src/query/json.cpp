@@ -2,6 +2,8 @@
 
 #include <array>
 #include <charconv>
+#include <cmath>
+#include <limits>
 #include <optional>
 #include <sstream>
 
@@ -30,6 +32,123 @@ std::string resolve_string_or_empty(const StringPool& pool, const StringId id) {
         return {};
     }
     return pool.resolve(id);
+}
+
+std::string join_tokens(const std::vector<std::string>& tokens, const std::size_t begin, const std::size_t end) {
+    std::string out;
+    for (std::size_t i = begin; i < end && i < tokens.size(); ++i) {
+        if (!out.empty()) {
+            out.push_back(' ');
+        }
+        out += tokens[i];
+    }
+    return out;
+}
+
+std::string first_locality_name(const DataStore& data, const std::vector<std::uint32_t>& locality_indices) {
+    if (locality_indices.empty() || locality_indices.front() >= data.localities.size()) {
+        return {};
+    }
+    return resolve_string_or_empty(data.strings, data.localities[locality_indices.front()].name_id);
+}
+
+const char* search_object_type_json(const SearchObjectType type) {
+    switch (type) {
+        case SearchObjectType::House: return "house";
+        case SearchObjectType::Street: return "street";
+        case SearchObjectType::Poi: return "poi";
+        case SearchObjectType::Region: return "region";
+        case SearchObjectType::Locality: return "locality";
+    }
+    return "unknown";
+}
+
+std::string geocode_object_name(const DataStore& data, const SearchObjectRef& ref) {
+    switch (ref.type) {
+        case SearchObjectType::House: {
+            if (ref.index >= data.houses.size()) return {};
+            const auto& house = data.houses[ref.index];
+            auto name = resolve_string_or_empty(data.strings, house.street_name_id);
+            const auto house_number = resolve_string_or_empty(data.strings, house.house_number_id);
+            if (!house_number.empty()) {
+                if (!name.empty()) name.push_back(' ');
+                name += house_number;
+            }
+            return name;
+        }
+        case SearchObjectType::Street:
+            return ref.index < data.streets.size() ? resolve_string_or_empty(data.strings, data.streets[ref.index].name_id) : std::string{};
+        case SearchObjectType::Poi:
+            return ref.index < data.pois.size() ? resolve_string_or_empty(data.strings, data.pois[ref.index].name_id) : std::string{};
+        case SearchObjectType::Region:
+            return ref.index < data.regions.size() ? resolve_string_or_empty(data.strings, data.regions[ref.index].name_id) : std::string{};
+        case SearchObjectType::Locality:
+            return ref.index < data.localities.size() ? resolve_string_or_empty(data.strings, data.localities[ref.index].name_id) : std::string{};
+    }
+    return {};
+}
+
+GeoPoint geocode_object_point(const DataStore& data, const SearchObjectRef& ref) {
+    switch (ref.type) {
+        case SearchObjectType::House:
+            if (ref.index < data.houses.size()) return GeoPoint{.lat = data.houses[ref.index].lat, .lon = data.houses[ref.index].lon};
+            break;
+        case SearchObjectType::Poi:
+            if (ref.index < data.pois.size()) return GeoPoint{.lat = data.pois[ref.index].lat, .lon = data.pois[ref.index].lon};
+            break;
+        case SearchObjectType::Locality:
+            if (ref.index < data.localities.size()) return GeoPoint{.lat = data.localities[ref.index].lat, .lon = data.localities[ref.index].lon};
+            break;
+        case SearchObjectType::Street:
+            if (ref.index < data.streets.size()) {
+                const auto& bbox = data.streets[ref.index].bbox;
+                return GeoPoint{.lat = static_cast<float>((bbox.min_lat + bbox.max_lat) * 0.5), .lon = static_cast<float>((bbox.min_lon + bbox.max_lon) * 0.5)};
+            }
+            break;
+        case SearchObjectType::Region:
+            if (ref.index < data.regions.size()) {
+                const auto& bbox = data.regions[ref.index].bbox;
+                return GeoPoint{.lat = static_cast<float>((bbox.min_lat + bbox.max_lat) * 0.5), .lon = static_cast<float>((bbox.min_lon + bbox.max_lon) * 0.5)};
+            }
+            break;
+    }
+    return {};
+}
+
+std::string candidate_city(const DataStore& data, const SearchObjectRef& ref) {
+    if (ref.type == SearchObjectType::House && ref.index < data.houses.size()) {
+        return resolve_string_or_empty(data.strings, data.houses[ref.index].city_id);
+    }
+    return {};
+}
+
+std::string candidate_postcode(const DataStore& data, const SearchObjectRef& ref) {
+    if (ref.type == SearchObjectType::House && ref.index < data.houses.size()) {
+        return resolve_string_or_empty(data.strings, data.houses[ref.index].postcode_id);
+    }
+    return {};
+}
+
+std::string rank_reason(const search::GeocodeCandidate& candidate) {
+    std::string reason;
+    if (candidate.exact_address_match) reason += "exact address";
+    if (candidate.exact_name_match) {
+        if (!reason.empty()) reason += " + ";
+        reason += "exact name";
+    }
+    if (candidate.shared_admin_level != -1) {
+        if (!reason.empty()) reason += " + ";
+        reason += "shared level " + std::to_string(candidate.shared_admin_level) + " relation";
+    } else if (candidate.locality_recognized) {
+        if (!reason.empty()) reason += " + ";
+        reason += "recognized locality";
+    }
+    if (candidate.unexplained_token_count > 0 && candidate.unexplained_token_count != std::numeric_limits<std::size_t>::max()) {
+        if (!reason.empty()) reason += " + ";
+        reason += std::to_string(candidate.unexplained_token_count) + " unexplained token(s)";
+    }
+    if (reason.empty()) reason = "stable fallback ordering";
+    return reason;
 }
 
 } // namespace
@@ -247,6 +366,78 @@ std::string serialize_regions_json(const DataStore& data, const std::vector<std:
         }
 
         out << "]}";
+    }
+
+    out << "]}";
+    return out.str();
+}
+
+std::string serialize_geocode_json(const DataStore& data, const search::GeocodeQueryResult& result) {
+    std::ostringstream out;
+    out << '{'
+        << "\"query\":\"" << escape_json(result.input) << "\","
+        << "\"normalized_query\":\"" << escape_json(result.normalized_query) << "\","
+        << "\"timing\":{"
+        << "\"normalization_ms\":" << result.timings.normalization_ms << ','
+        << "\"interpretation_ms\":" << result.timings.interpretation_ms << ','
+        << "\"candidate_lookup_ms\":" << result.timings.candidate_lookup_ms << ','
+        << "\"region_matching_ms\":" << result.timings.region_matching_ms << ','
+        << "\"ranking_ms\":" << result.timings.ranking_ms << ','
+        << "\"total_ms\":" << result.timings.total_ms
+        << "},"
+        << "\"interpretations\":[";
+
+    bool first_interpretation = true;
+    for (const auto& interpretation : result.interpretations) {
+        if (!first_interpretation) out << ',';
+        first_interpretation = false;
+
+        out << '{'
+            << "\"intent\":\"" << search::queryIntentName(interpretation.intent) << "\","
+            << "\"locality\":\"" << escape_json(first_locality_name(data, interpretation.locality_indices)) << "\","
+            << "\"locality_span\":\"" << escape_json(join_tokens(interpretation.tokens, interpretation.locality_token_begin, interpretation.locality_token_end)) << "\","
+            << "\"locality_candidates\":" << interpretation.locality_indices.size() << ','
+            << "\"entity\":\"" << escape_json(interpretation.entity_name) << "\",";
+        if (interpretation.intent == search::QueryIntent::Address) {
+            out << "\"house_number\":\"" << escape_json(interpretation.normalized_house_number) << "\","
+                << "\"address_key_found\":" << (interpretation.exact_address_key_match ? "true" : "false") << ',';
+        } else {
+            out << "\"exact_name_match\":" << (interpretation.exact_entity_name_match ? "true" : "false") << ',';
+        }
+        out << "\"unexplained_tokens\":" << interpretation.unexplained_token_count << ','
+            << "\"raw_candidates\":" << interpretation.raw_candidate_count
+            << '}';
+    }
+
+    out << "],\"results\":[";
+
+    bool first_result = true;
+    for (const auto& candidate : result.ranked_candidates) {
+        if (!first_result) out << ',';
+        first_result = false;
+
+        const auto point = geocode_object_point(data, candidate.ref);
+        out << '{'
+            << "\"type\":\"" << search_object_type_json(candidate.ref.type) << "\","
+            << "\"name\":\"" << escape_json(geocode_object_name(data, candidate.ref)) << "\","
+            << "\"city\":\"" << escape_json(candidate_city(data, candidate.ref)) << "\","
+            << "\"postcode\":\"" << escape_json(candidate_postcode(data, candidate.ref)) << "\","
+            << "\"lat\":" << point.lat << ','
+            << "\"lon\":" << point.lon << ','
+            << "\"exact_address\":" << (candidate.exact_address_match ? "true" : "false") << ','
+            << "\"exact_name\":" << (candidate.exact_name_match ? "true" : "false") << ','
+            << "\"locality_recognized\":" << (candidate.locality_recognized ? "true" : "false") << ','
+            << "\"shared_relation\":\"" << escape_json(resolve_string_or_empty(data.strings, candidate.shared_relation_name_id)) << "\","
+            << "\"shared_relation_id\":" << candidate.shared_relation_id << ','
+            << "\"shared_admin_level\":" << candidate.shared_admin_level << ','
+            << "\"distance_to_locality_m\":";
+        if (std::isfinite(candidate.distance_to_locality_m)) {
+            out << candidate.distance_to_locality_m;
+        } else {
+            out << "null";
+        }
+        out << ",\"rank_reason\":\"" << escape_json(rank_reason(candidate)) << "\""
+            << '}';
     }
 
     out << "]}";

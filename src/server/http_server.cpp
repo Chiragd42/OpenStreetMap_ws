@@ -2,6 +2,7 @@
 
 #include "query/bbox_query.hpp"
 #include "query/json.hpp"
+#include "search/geocode_query.hpp"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -221,6 +222,7 @@ std::string make_response(
 std::string handle_api_request(
     const HttpRequest& request,
     const DataStore& data,
+    const search::SearchIndex& search_index,
     const ParseStats& stats,
     ApiProfile& profile,
     int& status_code,
@@ -236,6 +238,23 @@ std::string handle_api_request(
         status_code = 200;
         status_text = "OK";
         return serialize_stats_json(stats);
+    }
+
+    if (request.path == "/geocode") {
+        profile.route = "/geocode";
+        const auto query_param = get_query_param(request.query, "q");
+        if (!query_param.has_value() || query_param->empty()) {
+            status_code = 400;
+            status_text = "Bad Request";
+            return serialize_error_json("Missing q query parameter");
+        }
+
+        const auto result = search::runGeocodeQuery(data, search_index, *query_param);
+        profile.matched = result.ranked_candidates.size();
+        profile.returned = result.ranked_candidates.size();
+        status_code = 200;
+        status_text = "OK";
+        return serialize_geocode_json(data, result);
     }
 
     if (request.path == "/reverse") {
@@ -483,6 +502,7 @@ bool send_all(const int socket_fd, const std::string& payload) {
 
 int run_http_server(
     const DataStore& data,
+    const search::SearchIndex& search_index,
     const ParseStats& stats,
     const std::uint16_t port,
     const std::size_t max_requests) {
@@ -550,7 +570,7 @@ int run_http_server(
 
         const auto request_start = std::chrono::steady_clock::now();
         if (const auto request = parse_request_line(request_view)) {
-            body = handle_api_request(*request, data, stats, profile, status_code, status_text);
+            body = handle_api_request(*request, data, search_index, stats, profile, status_code, status_text);
         }
         const auto elapsed_ms =
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - request_start).count();

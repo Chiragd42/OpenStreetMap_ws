@@ -2,6 +2,7 @@
 
 #include "metrics.hpp"
 #include "model.hpp"
+#include "search/geocode_query.hpp"
 
 #include <optional>
 #include <string>
@@ -16,6 +17,9 @@ namespace osm {
 [[nodiscard]] std::string serialize_houses_json(const DataStore& data, const std::vector<std::size_t>& indices);
 [[nodiscard]] std::string serialize_streets_json(const DataStore& data, const std::vector<std::size_t>& indices);
 [[nodiscard]] std::string serialize_regions_json(const DataStore& data, const std::vector<std::size_t>& indices);
+[[nodiscard]] std::string serialize_geocode_json(
+    const DataStore& data,
+    const search::GeocodeQueryResult& result);
 [[nodiscard]] std::string serialize_reverse_json(
     double query_lat,
     double query_lon,
