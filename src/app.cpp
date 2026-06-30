@@ -2,6 +2,8 @@
 
 #include "cache/datastore_cache.hpp"
 #include "ingest/pbf_extractor.hpp"
+#include "search/search_index.hpp"
+#include "search/text_normalizer.hpp"
 #include "server/http_server.hpp"
 
 #include <algorithm>
@@ -9,6 +11,7 @@
 #include <chrono>
 #include <cstdint>
 #include <iostream>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -31,6 +34,143 @@ namespace {
         case PoiCategory::Other: return "Other";
     }
     return "Other";
+}
+
+
+[[nodiscard]] const char* poi_category_label(const PoiCategory category) {
+    switch (category) {
+        case PoiCategory::Shop: return "Shop";
+        case PoiCategory::Restaurant: return "Restaurant";
+        case PoiCategory::Cafe: return "Cafe";
+        case PoiCategory::FastFood: return "FastFood";
+        case PoiCategory::Park: return "Park";
+        case PoiCategory::Hotel: return "Hotel";
+        case PoiCategory::School: return "School";
+        case PoiCategory::Hospital: return "Hospital";
+        case PoiCategory::Station: return "Station";
+        case PoiCategory::Other: return "Other";
+    }
+    return "Other";
+}
+
+[[nodiscard]] const char* osm_element_type_label(const OsmElementType type) {
+    switch (type) {
+        case OsmElementType::Node: return "node";
+        case OsmElementType::Way: return "way";
+    }
+    return "unknown";
+}
+
+[[nodiscard]] std::string resolve_string_or_empty(const DataStore& data, const StringId id) {
+    if (id == kInvalidStringId || id >= data.strings.size()) {
+        return {};
+    }
+    return data.strings.resolve(id);
+}
+
+void print_search_object(const DataStore& data, const SearchObjectRef& ref) {
+    switch (ref.type) {
+        case SearchObjectType::Street: {
+            if (ref.index >= data.streets.size()) {
+                std::cout << "    [Street] <invalid index " << ref.index << ">\n";
+                return;
+            }
+            const auto& street = data.streets[ref.index];
+            std::cout << "    [Street] " << resolve_string_or_empty(data, street.name_id)
+                      << " | index " << ref.index
+                      << " | points " << street.points_count << "\n";
+            return;
+        }
+        case SearchObjectType::Poi: {
+            if (ref.index >= data.pois.size()) {
+                std::cout << "    [POI] <invalid index " << ref.index << ">\n";
+                return;
+            }
+            const auto& poi = data.pois[ref.index];
+            std::cout << "    [POI] " << resolve_string_or_empty(data, poi.name_id) << "\n"
+                      << "      category: " << poi_category_label(poi.category) << "\n"
+                      << "      subtype: " << resolve_string_or_empty(data, poi.subtype_id) << "\n"
+                      << "      osm_type: " << osm_element_type_label(poi.osm_type) << "\n"
+                      << "      osm_id: " << poi.osm_id << "\n"
+                      << "      lat: " << poi.lat << "\n"
+                      << "      lon: " << poi.lon << "\n";
+            return;
+        }
+        case SearchObjectType::Region: {
+            if (ref.index >= data.regions.size()) {
+                std::cout << "    [Region] <invalid index " << ref.index << ">\n";
+                return;
+            }
+            const auto& region = data.regions[ref.index];
+            std::cout << "    [Region] " << resolve_string_or_empty(data, region.name_id)
+                      << " | admin_level " << region.admin_level
+                      << " | index " << ref.index << "\n";
+            return;
+        }
+        case SearchObjectType::House:
+            std::cout << "    [House] index " << ref.index << " (not indexed in Phase 2C)\n";
+            return;
+    }
+}
+
+void print_result_sample(const DataStore& data, const std::vector<SearchObjectRef>& refs, const std::size_t limit) {
+    const auto shown = std::min(limit, refs.size());
+    for (std::size_t i = 0; i < shown; ++i) {
+        print_search_object(data, refs[i]);
+    }
+    std::cout << "  showing: " << shown << " of " << refs.size() << '\n';
+}
+
+void run_test_search(const DataStore& data, const search::SearchIndex& index, const std::string& input) {
+    const auto normalized = search::normalizeSearchText(input);
+    const auto tokens = search::tokenizeNormalizedText(normalized);
+
+    std::cout << "\n[TestSearch]\n"
+              << "  input: " << input << '\n'
+              << "  normalized: " << normalized << '\n';
+
+    if (normalized.empty()) {
+        std::cout << "  normalized query is empty; no search performed.\n";
+        return;
+    }
+
+    std::cout << "  tokens:\n";
+    for (const auto& token : tokens) {
+        std::cout << "    - " << token << '\n';
+    }
+
+    std::vector<SearchObjectRef> exact_matches;
+    if (const auto it = index.exact_name_index.find(normalized); it != index.exact_name_index.end()) {
+        exact_matches = it->second;
+    }
+    std::cout << "  exact_name_matches: " << exact_matches.size() << "\n\n";
+
+    std::vector<std::vector<SearchObjectRef>> posting_lists;
+    posting_lists.reserve(tokens.size());
+    std::cout << "  token_postings:\n";
+    bool missing_token = false;
+    for (const auto& token : tokens) {
+        const auto it = index.token_index.find(token);
+        const auto count = it == index.token_index.end() ? 0 : it->second.size();
+        std::cout << "    " << token << ": " << count << '\n';
+        if (it == index.token_index.end()) {
+            missing_token = true;
+        } else {
+            posting_lists.push_back(it->second);
+        }
+    }
+
+    std::vector<SearchObjectRef> token_intersection;
+    if (!missing_token && !posting_lists.empty()) {
+        token_intersection = search::intersectPostingLists(posting_lists);
+    }
+
+    std::cout << "\n  token_intersection_matches: " << token_intersection.size() << "\n";
+
+    std::cout << "\n  first_exact_results:\n";
+    print_result_sample(data, exact_matches, 5);
+    std::cout << "\n  first_token_intersection_results:\n";
+    print_result_sample(data, token_intersection, 5);
 }
 
 struct EndpointKey {
@@ -343,6 +483,9 @@ int App::run(const AppOptions& options) const {
         merge_stats = merge_streets_in_place(data);
     }
 
+    const auto search_index_build = search::buildSearchIndex(data);
+    const auto& search_metrics = search_index_build.metrics;
+
     std::cout << "OSM geocoder Sheet-1 pipeline initialized (PBF-first, target: Baden-Wuerttemberg)." << '\n';
     std::cout << "Input source: " << source_description << '\n';
     std::cout << "Processed nodes: " << stats.processed_nodes << '\n';
@@ -395,6 +538,56 @@ int App::run(const AppOptions& options) const {
               << "  merged_streets: " << merge_stats.merged_streets << '\n'
               << "  reduced: " << reduced << " (" << reduced_pct << "%)\n"
               << "  merge_time_ms: " << merge_stats.merge_time_ms << '\n';
+
+    std::cout << "\n[SearchIndex]\n"
+              << "  indexed_streets: " << search_metrics.indexed_streets << '\n'
+              << "  skipped_unnamed_streets: " << search_metrics.skipped_unnamed_streets << '\n'
+              << "  indexed_pois: " << search_metrics.indexed_pois << '\n'
+              << "  indexed_regions: " << search_metrics.indexed_regions << '\n'
+              << "  skipped_pois_invalid_name_id: " << search_metrics.skipped_pois_invalid_name_id << '\n'
+              << "  skipped_pois_empty_normalized_name: " << search_metrics.skipped_pois_empty_normalized_name << '\n'
+              << "  regions_seen: " << search_metrics.regions_seen << '\n'
+              << "  regions_skipped_invalid_name_id: " << search_metrics.regions_skipped_invalid_name_id << '\n'
+              << "  regions_skipped_empty_normalized_name: " << search_metrics.regions_skipped_empty_normalized_name << '\n'
+              << "  exact_name_keys: " << search_metrics.exact_name_keys << '\n'
+              << "  exact_name_postings: " << search_metrics.exact_name_postings << '\n'
+              << "  token_keys: " << search_metrics.token_keys << '\n'
+              << "  token_postings: " << search_metrics.token_postings << '\n'
+              << "  region_name_keys: " << search_metrics.region_name_keys << '\n'
+              << "  region_name_postings: " << search_metrics.region_name_postings << '\n'
+              << "  longest_posting_token: " << search_metrics.longest_posting_token << '\n'
+              << "  longest_posting_list: " << search_metrics.longest_posting_list << '\n'
+              << "  build_seconds: " << search_metrics.build_seconds << '\n';
+
+    if (!search_metrics.largest_token_postings.empty()) {
+        std::cout << "  largest_token_postings:\n";
+        for (const auto& [token, count] : search_metrics.largest_token_postings) {
+            std::cout << "    " << token << ": " << count << '\n';
+        }
+    }
+    if (!search_metrics.skipped_poi_examples.empty()) {
+        std::cout << "  skipped_poi_examples:\n";
+        for (const auto& example : search_metrics.skipped_poi_examples) {
+            std::cout << "    " << example << '\n';
+        }
+    }
+    if (!search_metrics.indexed_region_examples.empty()) {
+        std::cout << "  indexed_region_examples:\n";
+        for (const auto& example : search_metrics.indexed_region_examples) {
+            std::cout << "    " << example << '\n';
+        }
+    }
+    if (!search_metrics.skipped_region_examples.empty()) {
+        std::cout << "  skipped_region_examples:\n";
+        for (const auto& example : search_metrics.skipped_region_examples) {
+            std::cout << "    " << example << '\n';
+        }
+    }
+
+    if (!options.test_search_query.empty()) {
+        run_test_search(data, search_index_build.index, options.test_search_query);
+        return 0;
+    }
 
     std::cout << "\nAvailable API routes (when --serve is enabled):\n"
               << "  /stats\n"

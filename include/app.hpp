@@ -14,6 +14,7 @@ struct AppOptions {
     std::string pbf_path;
     std::string save_cache_path;
     std::string load_cache_path;
+    std::string test_search_query;
 };
 
 class App {

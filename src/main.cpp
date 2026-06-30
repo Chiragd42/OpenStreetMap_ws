@@ -9,7 +9,7 @@
 namespace {
 
 void print_usage() {
-    std::cout << "Usage: osm_geocoder [--serve] [--port=<port>] [--max-requests=<n>] [--pbf=<path>] [--save-cache=<path>] [--load-cache=<path>] [--merge-streets] [--no-merge-streets]\n";
+    std::cout << "Usage: osm_geocoder [--serve] [--port=<port>] [--max-requests=<n>] [--pbf=<path>] [--save-cache=<path>] [--load-cache=<path>] [--test-search=<query>] [--merge-streets] [--no-merge-streets]\n";
 }
 
 bool parse_u16_arg(std::string_view raw, std::uint16_t& out) {
@@ -103,6 +103,21 @@ int main(int argc, char** argv) {
 
         if (arg.rfind("--load-cache=", 0) == 0) {
             options.load_cache_path = std::string(arg.substr(13));
+            continue;
+        }
+
+        if (arg == "--load-cache" && i + 1 < argc) {
+            options.load_cache_path = argv[++i];
+            continue;
+        }
+
+        if (arg.rfind("--test-search=", 0) == 0) {
+            options.test_search_query = std::string(arg.substr(14));
+            continue;
+        }
+
+        if (arg == "--test-search" && i + 1 < argc) {
+            options.test_search_query = argv[++i];
             continue;
         }
 

@@ -41,6 +41,8 @@ set(GEOCODER_CORE_SOURCES
     src/ingest/pbf_extractor.cpp
     src/query/bbox_query.cpp
     src/query/json.cpp
+    src/search/search_index.cpp
+    src/search/text_normalizer.cpp
     src/server/http_server.cpp
 )
 
@@ -68,6 +70,25 @@ add_executable(osm_geocoder
 )
 
 target_link_libraries(osm_geocoder
+    PRIVATE
+        geocoder_core
+)
+
+
+add_executable(normalizer_tests
+    tests/normalizer_tests.cpp
+)
+
+target_link_libraries(normalizer_tests
+    PRIVATE
+        geocoder_core
+)
+
+add_executable(search_index_tests
+    tests/search_index_tests.cpp
+)
+
+target_link_libraries(search_index_tests
     PRIVATE
         geocoder_core
 )

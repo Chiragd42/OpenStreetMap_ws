@@ -68,6 +68,17 @@ enum class SearchObjectType : std::uint8_t {
 struct SearchObjectRef {
     SearchObjectType type{SearchObjectType::House};
     std::uint32_t index{0};
+
+    [[nodiscard]] bool operator==(const SearchObjectRef& other) const noexcept {
+        return type == other.type && index == other.index;
+    }
+
+    [[nodiscard]] bool operator<(const SearchObjectRef& other) const noexcept {
+        if (type != other.type) {
+            return static_cast<std::uint8_t>(type) < static_cast<std::uint8_t>(other.type);
+        }
+        return index < other.index;
+    }
 };
 
 struct HousePoint {
