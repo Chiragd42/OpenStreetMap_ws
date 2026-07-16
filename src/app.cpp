@@ -679,6 +679,12 @@ StreetMergeStats merge_streets_in_place(DataStore& data) {
     return out;
 }
 
+void print_sheet_header(const int sheet) {
+    std::cout << "\n==============================\n"
+              << "[Sheet " << sheet << "]\n"
+              << "==============================\n";
+}
+
 } // namespace
 
 int App::run(const AppOptions& options) const {
@@ -731,53 +737,8 @@ int App::run(const AppOptions& options) const {
     const auto search_index_build = search::buildSearchIndex(data);
     const auto& search_metrics = search_index_build.metrics;
 
-    std::cout << "OSM geocoder Sheet-1 pipeline initialized (PBF-first, target: Baden-Wuerttemberg)." << '\n';
+    std::cout << "OSM geocoder pipeline initialized (PBF-first, target: Baden-Wuerttemberg)." << '\n';
     std::cout << "Input source: " << source_description << '\n';
-    std::cout << "Processed nodes: " << stats.processed_nodes << '\n';
-    std::cout << "Processed ways: " << stats.processed_ways << '\n';
-    std::cout << "Processed relations: " << stats.processed_relations << '\n';
-    std::cout << "Extracted houses: " << stats.extracted_houses << '\n';
-    std::cout << "Extracted streets: " << stats.extracted_streets << '\n';
-    std::cout << "Extracted regions: " << stats.extracted_regions << '\n';
-    std::cout << "\n[POI extraction]\n"
-              << "  POI nodes: " << stats.extracted_poi_nodes << '\n'
-              << "  POI ways: " << stats.extracted_poi_ways << '\n'
-              << "  POIs total: " << stats.extracted_pois_total << '\n';
-    for (std::size_t i = 0; i < kPoiCategoryCount; ++i) {
-        std::cout << "  " << poi_category_name(static_cast<PoiCategory>(i)) << ": "
-                  << stats.extracted_pois_by_category[i] << '\n';
-    }
-    std::cout << "  Skipped unnamed POIs: " << stats.skipped_unnamed_pois << '\n'
-              << "  Invalid POI geometries: " << stats.skipped_invalid_poi_geometry << '\n'
-              << "  POIs assigned to region: " << stats.pois_assigned_to_region << '\n'
-              << "  POIs without region: " << stats.pois_without_region << '\n'
-              << "  POI-region assignment seconds: " << stats.poi_region_assignment_seconds << '\n';
-    std::cout << "\n[Localities]\n"
-              << "  total: " << stats.extracted_localities_total << '\n';
-    for (std::size_t i = 0; i < kLocalityTypeCount; ++i) {
-        std::cout << "  " << locality_type_label(static_cast<LocalityType>(i)) << ": "
-                  << stats.extracted_localities_by_type[i] << '\n';
-    }
-    std::cout << "  skipped_unnamed: " << stats.skipped_unnamed_localities << '\n'
-              << "  assigned_to_region: " << stats.localities_assigned_to_region << '\n'
-              << "  without_region: " << stats.localities_without_region << '\n'
-              << "  assignment_seconds: " << stats.locality_region_assignment_seconds << '\n';
-
-    std::cout << "Houses from address nodes: " << stats.houses_from_address_nodes << '\n';
-    std::cout << "Houses from polygon centroid: " << stats.houses_from_polygon_centroid << '\n';
-    std::cout << "Houses from bbox fallback: " << stats.houses_from_polygon_bbox_fallback << '\n';
-    std::cout << "Skipped invalid house geometries: " << stats.houses_skipped_invalid_geometry << '\n';
-    std::cout << "Unnamed streets: " << stats.unnamed_streets << '\n';
-    std::cout << "Skipped complex region relations: " << stats.regions_skipped_complex_relations << '\n';
-    if (loaded_from_cache) {
-        const auto startup_seconds = std::chrono::duration<double>(
-                                         std::chrono::steady_clock::now() - app_start)
-                                         .count();
-        std::cout << "Load seconds: " << startup_seconds << '\n';
-    } else {
-        std::cout << "Parse seconds: " << stats.parse_seconds << '\n';
-    }
-    std::cout << "Estimated memory bytes: " << stats.estimated_memory_bytes << '\n';
 
     const auto reduced =
         (merge_stats.raw_streets > merge_stats.merged_streets)
@@ -788,15 +749,69 @@ int App::run(const AppOptions& options) const {
             ? 0.0
             : (static_cast<double>(reduced) * 100.0 / static_cast<double>(merge_stats.raw_streets));
 
-    std::cout << "\n[StreetMerge]\n"
-              << "  enabled: " << (options.merge_streets ? "yes" : "no") << '\n'
-              << "  raw_streets: " << merge_stats.raw_streets << '\n'
-              << "  merged_streets: " << merge_stats.merged_streets << '\n'
-              << "  reduced: " << reduced << " (" << reduced_pct << "%)\n"
-              << "  merge_time_ms: " << merge_stats.merge_time_ms << '\n';
+    print_sheet_header(1);
+    std::cout << "Processed nodes: " << stats.processed_nodes << '\n';
+    std::cout << "Processed ways: " << stats.processed_ways << '\n';
+    std::cout << "Processed relations: " << stats.processed_relations << '\n';
+    std::cout << "Extracted houses: " << stats.extracted_houses << '\n';
+    std::cout << "Extracted streets: " << stats.extracted_streets << '\n';
+    std::cout << "Extracted regions: " << stats.extracted_regions << '\n';
+    std::cout << "Houses from address nodes: " << stats.houses_from_address_nodes << '\n';
+    std::cout << "Houses from polygon centroid: " << stats.houses_from_polygon_centroid << '\n';
+    std::cout << "Houses from bbox fallback: " << stats.houses_from_polygon_bbox_fallback << '\n';
+    std::cout << "Skipped invalid house geometries: " << stats.houses_skipped_invalid_geometry << '\n';
+    std::cout << "Unnamed streets: " << stats.unnamed_streets << '\n';
+    std::cout << "Skipped complex region relations: " << stats.regions_skipped_complex_relations << '\n';
+    std::cout << "Street merge enabled: " << (options.merge_streets ? "yes" : "no") << '\n'
+              << "Raw streets: " << merge_stats.raw_streets << '\n'
+              << "Merged streets: " << merge_stats.merged_streets << '\n'
+              << "Street reduction: " << reduced << " (" << reduced_pct << "%)\n"
+              << "Street merge time ms: " << merge_stats.merge_time_ms << '\n';
+    if (loaded_from_cache) {
+        const auto startup_seconds = std::chrono::duration<double>(
+                                         std::chrono::steady_clock::now() - app_start)
+                                         .count();
+        std::cout << "Load seconds: " << startup_seconds << '\n';
+    } else {
+        std::cout << "Parse seconds: " << stats.parse_seconds << '\n';
+    }
+    std::cout << "Estimated memory bytes: " << stats.estimated_memory_bytes << '\n';
 
-    std::cout << "\n[SearchIndex]\n"
-              << "  indexed_streets: " << search_metrics.indexed_streets << '\n'
+    print_sheet_header(2);
+    std::cout << "Houses with assigned city: " << stats.houses_with_assigned_city << '\n'
+              << "Houses with assigned state: " << stats.houses_with_assigned_state << '\n'
+              << "Houses with assigned postcode: " << stats.houses_with_assigned_postcode << '\n'
+              << "Houses with assigned country: " << stats.houses_with_assigned_country << '\n'
+              << "Country assigned by PIP: " << stats.country_assigned_by_pip << '\n'
+              << "Country assigned by fallback: " << stats.country_assigned_by_fallback << '\n'
+              << "Region assignment seconds: " << stats.region_assignment_seconds << '\n'
+              << "Average PIP candidates per house: " << stats.avg_pip_candidates_per_house << '\n'
+              << "Spatial index cells: " << stats.spatial_index_cells << '\n'
+              << "Reverse index build seconds: " << stats.reverse_index_build_seconds << '\n';
+    std::cout << "POI nodes: " << stats.extracted_poi_nodes << '\n'
+              << "POI ways: " << stats.extracted_poi_ways << '\n'
+              << "POIs total: " << stats.extracted_pois_total << '\n';
+    for (std::size_t i = 0; i < kPoiCategoryCount; ++i) {
+        std::cout << poi_category_name(static_cast<PoiCategory>(i)) << ": "
+                  << stats.extracted_pois_by_category[i] << '\n';
+    }
+    std::cout << "Skipped unnamed POIs: " << stats.skipped_unnamed_pois << '\n'
+              << "Invalid POI geometries: " << stats.skipped_invalid_poi_geometry << '\n'
+              << "POIs assigned to region: " << stats.pois_assigned_to_region << '\n'
+              << "POIs without region: " << stats.pois_without_region << '\n'
+              << "POI-region assignment seconds: " << stats.poi_region_assignment_seconds << '\n';
+    std::cout << "Localities total: " << stats.extracted_localities_total << '\n';
+    for (std::size_t i = 0; i < kLocalityTypeCount; ++i) {
+        std::cout << locality_type_label(static_cast<LocalityType>(i)) << ": "
+                  << stats.extracted_localities_by_type[i] << '\n';
+    }
+    std::cout << "Localities skipped unnamed: " << stats.skipped_unnamed_localities << '\n'
+              << "Localities assigned to region: " << stats.localities_assigned_to_region << '\n'
+              << "Localities without region: " << stats.localities_without_region << '\n'
+              << "Locality assignment seconds: " << stats.locality_region_assignment_seconds << '\n';
+
+    print_sheet_header(3);
+    std::cout << "indexed_streets: " << search_metrics.indexed_streets << '\n'
               << "  skipped_unnamed_streets: " << search_metrics.skipped_unnamed_streets << '\n'
               << "  indexed_pois: " << search_metrics.indexed_pois << '\n'
               << "  indexed_regions: " << search_metrics.indexed_regions << '\n'
