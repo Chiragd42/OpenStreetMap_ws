@@ -4,6 +4,7 @@
 #include "model.hpp"
 #include "search/geocode_query.hpp"
 
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -21,6 +22,8 @@ namespace osm {
     const DataStore& data,
     const search::GeocodeQueryResult& result);
 [[nodiscard]] std::string serialize_reverse_json(
+    const DataStore& data,
+    std::size_t house_index,
     double query_lat,
     double query_lon,
     double result_lat,

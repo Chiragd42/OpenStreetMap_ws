@@ -151,6 +151,44 @@ std::string rank_reason(const search::GeocodeCandidate& candidate) {
     return reason;
 }
 
+void serialize_house_containing_regions(
+    std::ostringstream& out,
+    const DataStore& data,
+    const std::size_t house_index) {
+    out << "[";
+    if (house_index >= data.houses.size()) {
+        out << "]";
+        return;
+    }
+
+    const auto& house = data.houses[house_index];
+    const auto begin = static_cast<std::size_t>(house.containing_regions_begin);
+    const auto count = static_cast<std::size_t>(house.containing_regions_count);
+    if (begin + count > data.house_containing_region_ids.size()) {
+        out << "]";
+        return;
+    }
+
+    bool first = true;
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto region_index = static_cast<std::size_t>(data.house_containing_region_ids[begin + i]);
+        if (region_index >= data.regions.size()) {
+            continue;
+        }
+        const auto& region = data.regions[region_index];
+        if (!first) {
+            out << ',';
+        }
+        first = false;
+        out << '{'
+            << "\"name\":\"" << escape_json(resolve_string_or_empty(data.strings, region.name_id)) << "\","
+            << "\"admin_level\":" << region.admin_level << ','
+            << "\"relation_id\":" << region.source_relation_id
+            << '}';
+    }
+    out << "]";
+}
+
 } // namespace
 
 std::optional<BBox> parse_bbox_csv(std::string_view csv) {
@@ -449,6 +487,8 @@ std::string serialize_error_json(std::string_view message) {
 }
 
 std::string serialize_reverse_json(
+    const DataStore& data,
+    const std::size_t house_index,
     const double query_lat,
     const double query_lon,
     const double result_lat,
@@ -474,7 +514,9 @@ std::string serialize_reverse_json(
         << "\"state\":\"" << escape_json(state) << "\"," 
         << "\"postcode\":\"" << escape_json(postcode) << "\"," 
         << "\"country\":\"" << escape_json(country) << "\""
-        << "}}";
+        << "},\"containing_regions\":";
+    serialize_house_containing_regions(out, data, house_index);
+    out << '}';
     return out.str();
 }
 

@@ -327,6 +327,8 @@ std::string handle_api_request(
         status_code = 200;
         status_text = "OK";
         return serialize_reverse_json(
+            data,
+            best_idx,
             *lat,
             *lon,
             h.lat,
