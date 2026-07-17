@@ -15,9 +15,21 @@ namespace osm {
 [[nodiscard]] std::optional<BBox> parse_bbox_csv(std::string_view csv);
 
 [[nodiscard]] std::string serialize_stats_json(const ParseStats& stats);
-[[nodiscard]] std::string serialize_houses_json(const DataStore& data, const std::vector<std::size_t>& indices);
-[[nodiscard]] std::string serialize_streets_json(const DataStore& data, const std::vector<std::size_t>& indices);
-[[nodiscard]] std::string serialize_regions_json(const DataStore& data, const std::vector<std::size_t>& indices);
+[[nodiscard]] std::string serialize_houses_json(
+    const DataStore& data,
+    const std::vector<std::size_t>& indices,
+    std::size_t matched_count = 0,
+    bool include_metadata = false);
+[[nodiscard]] std::string serialize_streets_json(
+    const DataStore& data,
+    const std::vector<std::size_t>& indices,
+    std::size_t matched_count = 0,
+    bool include_metadata = false);
+[[nodiscard]] std::string serialize_regions_json(
+    const DataStore& data,
+    const std::vector<std::size_t>& indices,
+    std::size_t matched_count = 0,
+    bool include_metadata = false);
 [[nodiscard]] std::string serialize_geocode_json(
     const DataStore& data,
     const search::GeocodeQueryResult& result);

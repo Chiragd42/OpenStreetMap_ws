@@ -189,6 +189,15 @@ void serialize_house_containing_regions(
     out << "]";
 }
 
+void serialize_bbox_metadata(
+    std::ostringstream& out,
+    const std::size_t matched_count,
+    const std::size_t returned_count) {
+    out << "\"matched\":" << matched_count << ','
+        << "\"returned\":" << returned_count << ','
+        << "\"limited\":" << (returned_count < matched_count ? "true" : "false") << ',';
+}
+
 } // namespace
 
 std::optional<BBox> parse_bbox_csv(std::string_view csv) {
@@ -277,9 +286,17 @@ std::string serialize_stats_json(const ParseStats& stats) {
     return out.str();
 }
 
-std::string serialize_houses_json(const DataStore& data, const std::vector<std::size_t>& indices) {
+std::string serialize_houses_json(
+    const DataStore& data,
+    const std::vector<std::size_t>& indices,
+    const std::size_t matched_count,
+    const bool include_metadata) {
     std::ostringstream out;
-    out << "{\"houses\":[";
+    out << "{";
+    if (include_metadata) {
+        serialize_bbox_metadata(out, matched_count, indices.size());
+    }
+    out << "\"houses\":[";
 
     bool first = true;
     for (const auto idx : indices) {
@@ -316,9 +333,17 @@ std::string serialize_houses_json(const DataStore& data, const std::vector<std::
     return out.str();
 }
 
-std::string serialize_streets_json(const DataStore& data, const std::vector<std::size_t>& indices) {
+std::string serialize_streets_json(
+    const DataStore& data,
+    const std::vector<std::size_t>& indices,
+    const std::size_t matched_count,
+    const bool include_metadata) {
     std::ostringstream out;
-    out << "{\"streets\":[";
+    out << "{";
+    if (include_metadata) {
+        serialize_bbox_metadata(out, matched_count, indices.size());
+    }
+    out << "\"streets\":[";
 
     bool first_street = true;
     for (const auto idx : indices) {
@@ -364,9 +389,17 @@ std::string serialize_streets_json(const DataStore& data, const std::vector<std:
     return out.str();
 }
 
-std::string serialize_regions_json(const DataStore& data, const std::vector<std::size_t>& indices) {
+std::string serialize_regions_json(
+    const DataStore& data,
+    const std::vector<std::size_t>& indices,
+    const std::size_t matched_count,
+    const bool include_metadata) {
     std::ostringstream out;
-    out << "{\"regions\":[";
+    out << "{";
+    if (include_metadata) {
+        serialize_bbox_metadata(out, matched_count, indices.size());
+    }
+    out << "\"regions\":[";
 
     bool first_region = true;
     for (const auto idx : indices) {
