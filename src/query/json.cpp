@@ -131,7 +131,12 @@ std::string candidate_postcode(const DataStore& data, const SearchObjectRef& ref
 
 std::string rank_reason(const search::GeocodeCandidate& candidate) {
     std::string reason;
-    if (candidate.exact_address_match) reason += "exact address";
+    if (candidate.match_strategy == search::QueryMatchStrategy::Fuzzy) reason += "typo corrected";
+    if (candidate.match_strategy == search::QueryMatchStrategy::Partial) reason += "partial match";
+    if (candidate.exact_address_match) {
+        if (!reason.empty()) reason += " + ";
+        reason += "exact address";
+    }
     if (candidate.exact_name_match) {
         if (!reason.empty()) reason += " + ";
         reason += "exact name";
@@ -465,6 +470,7 @@ std::string serialize_geocode_json(const DataStore& data, const search::GeocodeQ
 
         out << '{'
             << "\"intent\":\"" << search::queryIntentName(interpretation.intent) << "\","
+            << "\"match_strategy\":\"" << search::queryMatchStrategyName(interpretation.match_strategy) << "\","
             << "\"locality\":\"" << escape_json(first_locality_name(data, interpretation.locality_indices)) << "\","
             << "\"locality_span\":\"" << escape_json(join_tokens(interpretation.tokens, interpretation.locality_token_begin, interpretation.locality_token_end)) << "\","
             << "\"locality_candidates\":" << interpretation.locality_indices.size() << ','
@@ -497,6 +503,7 @@ std::string serialize_geocode_json(const DataStore& data, const search::GeocodeQ
             << "\"lon\":" << point.lon << ','
             << "\"exact_address\":" << (candidate.exact_address_match ? "true" : "false") << ','
             << "\"exact_name\":" << (candidate.exact_name_match ? "true" : "false") << ','
+            << "\"match_strategy\":\"" << search::queryMatchStrategyName(candidate.match_strategy) << "\","
             << "\"locality_recognized\":" << (candidate.locality_recognized ? "true" : "false") << ','
             << "\"shared_relation\":\"" << escape_json(resolve_string_or_empty(data.strings, candidate.shared_relation_name_id)) << "\","
             << "\"shared_relation_id\":" << candidate.shared_relation_id << ','

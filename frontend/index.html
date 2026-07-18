@@ -117,6 +117,34 @@
     .geocode-reason {
       color: #166534;
     }
+    .search-help {
+      margin: 0 0 6px;
+      color: #475569;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 4px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 2px 6px;
+      font-size: 11px;
+      font-weight: 700;
+      background: #e2e8f0;
+      color: #334155;
+    }
+    .badge.house { background: #dbeafe; color: #1d4ed8; }
+    .badge.poi { background: #fee2e2; color: #b91c1c; }
+    .badge.locality { background: #dcfce7; color: #15803d; }
+    .badge.fuzzy { background: #fef3c7; color: #92400e; }
+    .badge.partial { background: #ede9fe; color: #6d28d9; }
+    .badge.original { background: #e0f2fe; color: #0369a1; }
   </style>
 </head>
 <body>
@@ -138,6 +166,7 @@
       <input id="geocodeInput" class="search-input" type="search" placeholder="Search address or place..." autocomplete="off" />
       <button id="geocodeButton" class="btn" type="button">Search</button>
     </div>
+    <div class="search-help">Supports exact, typo-tolerant, and partial search. Try: <code>Aalen Bahn 10</code>, <code>Stutgart Burgar King</code>, <code>Stuttgart Burger Ki</code>.</div>
     <div id="geocodeStatus" class="geocode-status"></div>
     <div id="geocodeResults" class="geocode-results"></div>
     <div id="reverseResultBox" class="reverse-box" style="display:none;">
@@ -238,6 +267,28 @@
       return "#475569";
     }
 
+    function matchStrategyLabel(strategy) {
+      if (strategy === "fuzzy") return "typo corrected";
+      if (strategy === "partial") return "partial match";
+      return "original query";
+    }
+
+    function resultBadges(result) {
+      const type = result.type || "object";
+      const strategy = result.match_strategy || "original";
+      const badges = [
+        `<span class="badge ${escapeHtml(type)}">${escapeHtml(type)}</span>`,
+        `<span class="badge ${escapeHtml(strategy)}">${escapeHtml(matchStrategyLabel(strategy))}</span>`
+      ];
+      if (result.shared_relation) {
+        badges.push(`<span class="badge">shared region</span>`);
+      }
+      if (result.exact_address || result.exact_name) {
+        badges.push(`<span class="badge">exact index hit</span>`);
+      }
+      return badges.join("");
+    }
+
     function renderGeocodeResults(data) {
       const results = Array.isArray(data.results) ? data.results : [];
       geocodeResultsEl.innerHTML = "";
@@ -256,6 +307,7 @@
         const detailParts = [result.type, result.postcode, result.shared_relation ? `shared ${result.shared_relation}` : ""].filter(Boolean);
         button.innerHTML = `
           <div class="geocode-title">${escapeHtml(formatResultTitle(result, i))}</div>
+          <div class="badge-row">${resultBadges(result)}</div>
           <div class="geocode-detail">${escapeHtml(detailParts.join(" · "))}</div>
           <div class="geocode-reason">${escapeHtml(result.rank_reason || "")}</div>
         `;
@@ -283,6 +335,7 @@
         });
         marker.bindPopup(`
           <strong>${escapeHtml(result.name || "(unnamed)")}</strong><br/>
+          ${escapeHtml(matchStrategyLabel(result.match_strategy || "original"))}<br/>
           ${escapeHtml(result.city || result.shared_relation || "")}<br/>
           ${escapeHtml(result.rank_reason || "")}
         `);

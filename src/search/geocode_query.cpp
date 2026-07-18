@@ -471,12 +471,19 @@ using CandidateMap = std::map<SearchObjectRef, CandidateAccumulatorEntry>;
 void append_interpretations_for_tokens(
     const SearchIndex& index,
     const std::vector<std::string>& tokens,
+    const QueryMatchStrategy strategy,
     std::vector<QueryInterpretation>& interpretations) {
     const auto normalized_query = normalized_query_from_tokens(tokens);
     const auto house_spans = detect_house_spans(tokens);
     const auto locality_spans = detect_locality_spans(index, tokens);
     auto address_interpretations = generate_address_interpretations(index, normalized_query, tokens, house_spans, locality_spans);
     auto named_interpretations = generate_named_interpretations(index, normalized_query, tokens, locality_spans);
+    for (auto& interpretation : address_interpretations) {
+        interpretation.match_strategy = strategy;
+    }
+    for (auto& interpretation : named_interpretations) {
+        interpretation.match_strategy = strategy;
+    }
     interpretations.reserve(interpretations.size() + address_interpretations.size() + named_interpretations.size());
     interpretations.insert(interpretations.end(), std::make_move_iterator(address_interpretations.begin()), std::make_move_iterator(address_interpretations.end()));
     interpretations.insert(interpretations.end(), std::make_move_iterator(named_interpretations.begin()), std::make_move_iterator(named_interpretations.end()));
@@ -691,6 +698,7 @@ void retrieve_address_candidates(const DataStore& data, const SearchIndex& index
         GeocodeCandidate candidate;
         candidate.ref = ref;
         candidate.interpretation_index = interpretation_index;
+        candidate.match_strategy = interpretation.match_strategy;
         candidate.exact_address_match = true;
         enrich_candidate_with_locality(data, interpretation, candidate);
         improve_candidate(candidates, candidate, regionSpecificity(candidate.shared_admin_level));
@@ -723,6 +731,7 @@ void retrieve_named_candidates(const DataStore& data, const SearchIndex& index, 
         GeocodeCandidate candidate;
         candidate.ref = ref;
         candidate.interpretation_index = interpretation_index;
+        candidate.match_strategy = interpretation.match_strategy;
         candidate.exact_name_match = exact;
         enrich_candidate_with_locality(data, interpretation, candidate);
         improve_candidate(candidates, candidate, regionSpecificity(candidate.shared_admin_level));
@@ -752,6 +761,15 @@ const char* queryIntentName(const QueryIntent intent) {
     return "Unknown";
 }
 
+const char* queryMatchStrategyName(const QueryMatchStrategy strategy) {
+    switch (strategy) {
+        case QueryMatchStrategy::Original: return "original";
+        case QueryMatchStrategy::Fuzzy: return "fuzzy";
+        case QueryMatchStrategy::Partial: return "partial";
+    }
+    return "original";
+}
+
 int regionSpecificity(const std::int32_t admin_level) {
     switch (admin_level) {
         case 8: return 3;
@@ -777,14 +795,14 @@ GeocodeQueryResult runGeocodeQuery(
     result.timings.normalization_ms = elapsed_ms(norm_start, norm_end);
 
     const auto interp_start = std::chrono::steady_clock::now();
-    append_interpretations_for_tokens(index, tokens, result.interpretations);
+    append_interpretations_for_tokens(index, tokens, QueryMatchStrategy::Original, result.interpretations);
     const auto fuzzy_tokens = fuzzy_correct_tokens(index, tokens);
     if (fuzzy_tokens != tokens) {
-        append_interpretations_for_tokens(index, fuzzy_tokens, result.interpretations);
+        append_interpretations_for_tokens(index, fuzzy_tokens, QueryMatchStrategy::Fuzzy, result.interpretations);
     }
     const auto partial_tokens = partial_complete_tokens(index, tokens);
     if (partial_tokens != tokens && partial_tokens != fuzzy_tokens) {
-        append_interpretations_for_tokens(index, partial_tokens, result.interpretations);
+        append_interpretations_for_tokens(index, partial_tokens, QueryMatchStrategy::Partial, result.interpretations);
     }
     std::stable_sort(result.interpretations.begin(), result.interpretations.end(), [](const auto& lhs, const auto& rhs) {
         if (lhs.exact_address_key_match != rhs.exact_address_key_match) return lhs.exact_address_key_match > rhs.exact_address_key_match;
