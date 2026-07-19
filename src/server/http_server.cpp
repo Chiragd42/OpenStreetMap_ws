@@ -327,6 +327,8 @@ std::string handle_api_request(
         status_code = 200;
         status_text = "OK";
         return serialize_reverse_json(
+            data,
+            best_idx,
             *lat,
             *lon,
             h.lat,
@@ -387,7 +389,7 @@ std::string handle_api_request(
             const auto indices = apply_stride_and_limit(matched, stride, limit);
             profile.matched = matched.size();
             profile.returned = indices.size();
-            return serialize_houses_json(data, indices);
+            return serialize_houses_json(data, indices, matched.size(), true);
         }
 
         if (request.path == "/regions") {
@@ -444,7 +446,7 @@ std::string handle_api_request(
             const auto indices = apply_stride_and_limit(filtered, stride, limit);
             profile.matched = matched.size();
             profile.returned = indices.size();
-            return serialize_regions_json(data, indices);
+            return serialize_regions_json(data, indices, filtered.size(), true);
         }
 
         profile.route = "/streets";
@@ -475,7 +477,7 @@ std::string handle_api_request(
         const auto indices = apply_stride_and_limit(matched, stride, limit);
         profile.matched = matched.size();
         profile.returned = indices.size();
-        return serialize_streets_json(data, indices);
+        return serialize_streets_json(data, indices, matched.size(), true);
     }
 
     profile.route = request.path;

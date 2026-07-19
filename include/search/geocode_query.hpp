@@ -17,8 +17,15 @@ enum class QueryIntent : std::uint8_t {
     Unknown
 };
 
+enum class QueryMatchStrategy : std::uint8_t {
+    Original,
+    Fuzzy,
+    Partial
+};
+
 struct QueryInterpretation {
     QueryIntent intent{QueryIntent::Unknown};
+    QueryMatchStrategy match_strategy{QueryMatchStrategy::Original};
     std::string normalized_query;
     std::vector<std::string> tokens;
     std::string entity_name;
@@ -37,6 +44,7 @@ struct QueryInterpretation {
 struct GeocodeCandidate {
     SearchObjectRef ref{};
     std::size_t interpretation_index{0};
+    QueryMatchStrategy match_strategy{QueryMatchStrategy::Original};
     std::uint64_t shared_relation_id{0};
     StringId shared_relation_name_id{kInvalidStringId};
     std::int32_t shared_admin_level{-1};
@@ -69,6 +77,7 @@ struct GeocodeQueryOptions {
 };
 
 [[nodiscard]] const char* queryIntentName(QueryIntent intent);
+[[nodiscard]] const char* queryMatchStrategyName(QueryMatchStrategy strategy);
 [[nodiscard]] int regionSpecificity(std::int32_t admin_level);
 [[nodiscard]] GeocodeQueryResult runGeocodeQuery(
     const DataStore& data,

@@ -131,7 +131,12 @@ std::string candidate_postcode(const DataStore& data, const SearchObjectRef& ref
 
 std::string rank_reason(const search::GeocodeCandidate& candidate) {
     std::string reason;
-    if (candidate.exact_address_match) reason += "exact address";
+    if (candidate.match_strategy == search::QueryMatchStrategy::Fuzzy) reason += "typo corrected";
+    if (candidate.match_strategy == search::QueryMatchStrategy::Partial) reason += "partial match";
+    if (candidate.exact_address_match) {
+        if (!reason.empty()) reason += " + ";
+        reason += "exact address";
+    }
     if (candidate.exact_name_match) {
         if (!reason.empty()) reason += " + ";
         reason += "exact name";
@@ -149,6 +154,53 @@ std::string rank_reason(const search::GeocodeCandidate& candidate) {
     }
     if (reason.empty()) reason = "stable fallback ordering";
     return reason;
+}
+
+void serialize_house_containing_regions(
+    std::ostringstream& out,
+    const DataStore& data,
+    const std::size_t house_index) {
+    out << "[";
+    if (house_index >= data.houses.size()) {
+        out << "]";
+        return;
+    }
+
+    const auto& house = data.houses[house_index];
+    const auto begin = static_cast<std::size_t>(house.containing_regions_begin);
+    const auto count = static_cast<std::size_t>(house.containing_regions_count);
+    if (begin + count > data.house_containing_region_ids.size()) {
+        out << "]";
+        return;
+    }
+
+    bool first = true;
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto region_index = static_cast<std::size_t>(data.house_containing_region_ids[begin + i]);
+        if (region_index >= data.regions.size()) {
+            continue;
+        }
+        const auto& region = data.regions[region_index];
+        if (!first) {
+            out << ',';
+        }
+        first = false;
+        out << '{'
+            << "\"name\":\"" << escape_json(resolve_string_or_empty(data.strings, region.name_id)) << "\","
+            << "\"admin_level\":" << region.admin_level << ','
+            << "\"relation_id\":" << region.source_relation_id
+            << '}';
+    }
+    out << "]";
+}
+
+void serialize_bbox_metadata(
+    std::ostringstream& out,
+    const std::size_t matched_count,
+    const std::size_t returned_count) {
+    out << "\"matched\":" << matched_count << ','
+        << "\"returned\":" << returned_count << ','
+        << "\"limited\":" << (returned_count < matched_count ? "true" : "false") << ',';
 }
 
 } // namespace
@@ -239,9 +291,17 @@ std::string serialize_stats_json(const ParseStats& stats) {
     return out.str();
 }
 
-std::string serialize_houses_json(const DataStore& data, const std::vector<std::size_t>& indices) {
+std::string serialize_houses_json(
+    const DataStore& data,
+    const std::vector<std::size_t>& indices,
+    const std::size_t matched_count,
+    const bool include_metadata) {
     std::ostringstream out;
-    out << "{\"houses\":[";
+    out << "{";
+    if (include_metadata) {
+        serialize_bbox_metadata(out, matched_count, indices.size());
+    }
+    out << "\"houses\":[";
 
     bool first = true;
     for (const auto idx : indices) {
@@ -278,9 +338,17 @@ std::string serialize_houses_json(const DataStore& data, const std::vector<std::
     return out.str();
 }
 
-std::string serialize_streets_json(const DataStore& data, const std::vector<std::size_t>& indices) {
+std::string serialize_streets_json(
+    const DataStore& data,
+    const std::vector<std::size_t>& indices,
+    const std::size_t matched_count,
+    const bool include_metadata) {
     std::ostringstream out;
-    out << "{\"streets\":[";
+    out << "{";
+    if (include_metadata) {
+        serialize_bbox_metadata(out, matched_count, indices.size());
+    }
+    out << "\"streets\":[";
 
     bool first_street = true;
     for (const auto idx : indices) {
@@ -326,9 +394,17 @@ std::string serialize_streets_json(const DataStore& data, const std::vector<std:
     return out.str();
 }
 
-std::string serialize_regions_json(const DataStore& data, const std::vector<std::size_t>& indices) {
+std::string serialize_regions_json(
+    const DataStore& data,
+    const std::vector<std::size_t>& indices,
+    const std::size_t matched_count,
+    const bool include_metadata) {
     std::ostringstream out;
-    out << "{\"regions\":[";
+    out << "{";
+    if (include_metadata) {
+        serialize_bbox_metadata(out, matched_count, indices.size());
+    }
+    out << "\"regions\":[";
 
     bool first_region = true;
     for (const auto idx : indices) {
@@ -394,6 +470,7 @@ std::string serialize_geocode_json(const DataStore& data, const search::GeocodeQ
 
         out << '{'
             << "\"intent\":\"" << search::queryIntentName(interpretation.intent) << "\","
+            << "\"match_strategy\":\"" << search::queryMatchStrategyName(interpretation.match_strategy) << "\","
             << "\"locality\":\"" << escape_json(first_locality_name(data, interpretation.locality_indices)) << "\","
             << "\"locality_span\":\"" << escape_json(join_tokens(interpretation.tokens, interpretation.locality_token_begin, interpretation.locality_token_end)) << "\","
             << "\"locality_candidates\":" << interpretation.locality_indices.size() << ','
@@ -426,6 +503,7 @@ std::string serialize_geocode_json(const DataStore& data, const search::GeocodeQ
             << "\"lon\":" << point.lon << ','
             << "\"exact_address\":" << (candidate.exact_address_match ? "true" : "false") << ','
             << "\"exact_name\":" << (candidate.exact_name_match ? "true" : "false") << ','
+            << "\"match_strategy\":\"" << search::queryMatchStrategyName(candidate.match_strategy) << "\","
             << "\"locality_recognized\":" << (candidate.locality_recognized ? "true" : "false") << ','
             << "\"shared_relation\":\"" << escape_json(resolve_string_or_empty(data.strings, candidate.shared_relation_name_id)) << "\","
             << "\"shared_relation_id\":" << candidate.shared_relation_id << ','
@@ -449,6 +527,8 @@ std::string serialize_error_json(std::string_view message) {
 }
 
 std::string serialize_reverse_json(
+    const DataStore& data,
+    const std::size_t house_index,
     const double query_lat,
     const double query_lon,
     const double result_lat,
@@ -474,7 +554,9 @@ std::string serialize_reverse_json(
         << "\"state\":\"" << escape_json(state) << "\"," 
         << "\"postcode\":\"" << escape_json(postcode) << "\"," 
         << "\"country\":\"" << escape_json(country) << "\""
-        << "}}";
+        << "},\"containing_regions\":";
+    serialize_house_containing_regions(out, data, house_index);
+    out << '}';
     return out.str();
 }
 

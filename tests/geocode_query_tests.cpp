@@ -176,6 +176,31 @@ int main() {
     expect_true(studio.ranked_candidates.front().ref.type == osm::SearchObjectType::Poi, "studio exact named object beats weak address");
     expect_eq_u32(studio.ranked_candidates.front().ref.index, 2, "studio top poi");
 
+    const auto typo_address = osm::search::runGeocodeQuery(data, index, "Aalen Bahnofstrasse 10");
+    expect_true(!typo_address.ranked_candidates.empty(), "typo address has candidates");
+    expect_eq_u32(typo_address.ranked_candidates.front().ref.index, 0, "typo address top house");
+    expect_true(typo_address.ranked_candidates.front().match_strategy == osm::search::QueryMatchStrategy::Fuzzy, "typo address marked fuzzy");
+    expect_eq_string(typo_address.interpretations.front().entity_name, "bahnhofstrasse", "typo address corrected street interpretation");
+
+    const auto typo_poi = osm::search::runGeocodeQuery(data, index, "Stutgart Burgar King");
+    expect_true(!typo_poi.ranked_candidates.empty(), "typo poi has candidates");
+    expect_true(typo_poi.ranked_candidates.front().ref.type == osm::SearchObjectType::Poi, "typo poi returns poi");
+    expect_eq_u32(typo_poi.ranked_candidates.front().ref.index, 0, "typo poi top stuttgart burger king");
+    expect_eq_i32(typo_poi.ranked_candidates.front().shared_admin_level, 6, "typo poi level 6 locality match");
+    expect_true(typo_poi.ranked_candidates.front().match_strategy == osm::search::QueryMatchStrategy::Fuzzy, "typo poi marked fuzzy");
+
+    const auto partial_address = osm::search::runGeocodeQuery(data, index, "Aalen Bahn 10");
+    expect_true(!partial_address.ranked_candidates.empty(), "partial address has candidates");
+    expect_eq_u32(partial_address.ranked_candidates.front().ref.index, 0, "partial address top house");
+    expect_true(partial_address.ranked_candidates.front().match_strategy == osm::search::QueryMatchStrategy::Partial, "partial address marked partial");
+    expect_eq_string(partial_address.interpretations.front().entity_name, "bahnhofstrasse", "partial address completed street interpretation");
+
+    const auto partial_poi = osm::search::runGeocodeQuery(data, index, "Stuttgart Burger Ki");
+    expect_true(!partial_poi.ranked_candidates.empty(), "partial poi has candidates");
+    expect_true(partial_poi.ranked_candidates.front().ref.type == osm::SearchObjectType::Poi, "partial poi returns poi");
+    expect_eq_u32(partial_poi.ranked_candidates.front().ref.index, 0, "partial poi top stuttgart burger king");
+    expect_true(partial_poi.ranked_candidates.front().match_strategy == osm::search::QueryMatchStrategy::Partial, "partial poi marked partial");
+
     const auto neustadt = osm::search::runGeocodeQuery(data, index, "Neustadt Bahnhofstrasse 10");
     expect_true(!neustadt.ranked_candidates.empty(), "duplicate locality has candidates");
     expect_eq_i32(neustadt.ranked_candidates.front().shared_admin_level, 8, "duplicate locality level 8 match");
