@@ -11,46 +11,176 @@
     crossorigin=""
   />
   <style>
-    html, body { margin: 0; padding: 0; height: 100%; font-family: system-ui, sans-serif; }
+    html, body { margin: 0; padding: 0; height: 100%; font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #172033; }
     #map { width: 100%; height: 100%; }
+    .panel-dock {
+      position: absolute;
+      inset: 0;
+      z-index: 1000;
+      pointer-events: none;
+    }
     .panel {
       position: absolute;
-      top: 10px;
-      right: 10px;
-      z-index: 1000;
-      background: rgba(255, 255, 255, 0.95);
-      border-radius: 8px;
-      padding: 10px 12px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-      width: min(360px, calc(100vw - 44px));
+      background: rgba(255, 255, 255, 0.94);
+      border: 1px solid rgba(255, 255, 255, 0.78);
+      border-radius: 12px;
+      padding: 8px;
+      box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16), 0 2px 6px rgba(15, 23, 42, 0.08);
+      backdrop-filter: blur(12px);
       max-height: calc(100vh - 44px);
       overflow: auto;
-      font-size: 14px;
+      font-size: 13px;
+      pointer-events: auto;
     }
-    .panel h3 { margin: 0 0 8px 0; font-size: 14px; }
-    .panel .row { margin-bottom: 6px; }
+    .tools-panel {
+      bottom: 12px;
+      left: 10px;
+      width: min(250px, calc(100vw - 36px));
+    }
+    .search-panel {
+      top: 10px;
+      right: 10px;
+      width: min(350px, calc(100vw - 36px));
+    }
+    .panel h3 { margin: 0; color: #0f172a; font-size: 14.5px; font-weight: 750; letter-spacing: -0.01em; }
+    .panel .row { margin-bottom: 3px; }
+    .layer-card {
+      margin: 5px 0;
+      padding: 6px;
+      border: 1px solid #dbe3ee;
+      border-radius: 10px;
+      background: rgba(248, 250, 252, 0.88);
+    }
+    .layer-card-title {
+      margin: 0 0 4px;
+      color: #334155;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+    .layer-counts {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-bottom: 5px;
+    }
+    .layer-count {
+      display: inline-flex;
+      align-items: center;
+      min-height: 18px;
+      padding: 1px 6px;
+      border-radius: 999px;
+      background: #e2e8f0;
+      color: #334155;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+    .layer-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 8px;
+    }
+    .layer-controls label {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      color: #334155;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .layer-controls input {
+      appearance: none;
+      width: 15px;
+      height: 15px;
+      margin: 0;
+      border: 1px solid #94a3b8;
+      border-radius: 4px;
+      background: #ffffff;
+      cursor: pointer;
+    }
+    .layer-controls input:checked {
+      border-color: #4f46e5;
+      background: #4f46e5;
+      box-shadow: inset 0 0 0 3px #ffffff;
+    }
+    .layer-controls input:focus-visible {
+      outline: 2px solid #818cf8;
+      outline-offset: 2px;
+    }
     .search-row {
       display: flex;
-      gap: 6px;
-      margin: 8px 0 6px;
+      gap: 5px;
+      margin: 4px 0 0;
+    }
+    .search-support {
+      margin: 3px 0 0;
+      color: #475569;
+      font-size: 11px;
+      line-height: 1.3;
+    }
+    .search-examples {
+      margin: 2px 0 0;
+      color: #64748b;
+      font-size: 10px;
+      line-height: 1.3;
+    }
+    .search-examples code {
+      color: #334155;
+      font-size: inherit;
+    }
+    .search-card {
+      margin: 5px 0 0;
+      padding: 6px;
+      border: 1px solid #dbe3ee;
+      border-radius: 10px;
+      background: linear-gradient(145deg, #f8fafc, #f1f5f9);
+    }
+    .search-label {
+      display: block;
+      color: #334155;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
     }
     .search-input {
       min-width: 0;
       flex: 1;
       border: 1px solid #cbd5e1;
-      border-radius: 6px;
+      border-radius: 8px;
       padding: 6px 8px;
-      font-size: 13px;
+      color: #0f172a;
+      font-size: 12px;
+      transition: border-color 160ms ease, box-shadow 160ms ease;
     }
-    .muted { color: #555; font-size: 12px; }
-    .warn { color: #b45309; font-size: 12px; margin-top: 6px; }
+    .search-input:focus {
+      outline: none;
+      border-color: #2563eb;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+    }
+    .btn-primary {
+      border-color: #2563eb;
+      background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      color: #ffffff;
+      font-weight: 700;
+      box-shadow: 0 2px 4px rgba(37, 99, 235, 0.22);
+    }
+    .btn-primary:hover,
+    .btn-primary:focus-visible {
+      border-color: #1d4ed8;
+      background: #1d4ed8;
+    }
+    .muted { color: #555; font-size: 11px; }
+    .warn { color: #b45309; font-size: 11px; margin-top: 4px; }
     .btn {
       border: 1px solid #cbd5e1;
       background: #f8fafc;
       color: #0f172a;
       border-radius: 6px;
-      padding: 4px 8px;
-      font-size: 12px;
+      padding: 3px 7px;
+      font-size: 11px;
       cursor: pointer;
     }
     .btn.active {
@@ -58,30 +188,65 @@
       border-color: #6d28d9;
       color: #ffffff;
     }
+    .reverse-toggle {
+      display: flex;
+      width: 100%;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      margin: 4px 0 0;
+      border-color: #d1d5db;
+      background: #f8fafc;
+      color: #334155;
+      text-align: left;
+    }
+    .reverse-toggle.active {
+      background: #f5f3ff;
+      border-color: #8b5cf6;
+      color: #4c1d95;
+    }
+    .reverse-toggle-label {
+      font-weight: 700;
+    }
+    .reverse-toggle-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .reverse-status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: #94a3b8;
+    }
+    .reverse-toggle.active .reverse-status-dot {
+      background: #7c3aed;
+      box-shadow: 0 0 0 3px #ddd6fe;
+    }
     .reverse-box {
-      margin-top: 8px;
-      padding: 8px;
+      margin-top: 6px;
+      padding: 6px;
       border-radius: 6px;
       border: 1px solid #c4b5fd;
       background: #f5f3ff;
-      font-size: 12px;
+      font-size: 11px;
       line-height: 1.35;
     }
     .reverse-box-title {
       font-weight: 700;
       color: #4c1d95;
-      margin-bottom: 4px;
-    }
-    .geocode-status {
-      min-height: 16px;
-      color: #475569;
-      font-size: 12px;
-      margin-bottom: 6px;
+      margin-bottom: 3px;
     }
     .geocode-results {
       display: grid;
-      gap: 6px;
-      margin-bottom: 8px;
+      gap: 5px;
+      margin-top: 6px;
+      max-height: min(42vh, 350px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding-right: 2px;
     }
     .geocode-result {
       display: block;
@@ -89,27 +254,30 @@
       text-align: left;
       border: 1px solid #d1d5db;
       background: #ffffff;
-      border-radius: 6px;
-      padding: 7px 8px;
-      cursor: pointer;
+      border-radius: 8px;
+      padding: 6px 8px;
       color: #0f172a;
+      font-size: 12px;
+      cursor: pointer;
+      transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
     }
     .geocode-result:hover,
     .geocode-result:focus {
       outline: none;
       border-color: #2563eb;
       box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.16);
+      transform: translateY(-1px);
     }
     .geocode-title {
       font-weight: 700;
-      font-size: 13px;
+      font-size: 12px;
       line-height: 1.25;
       overflow-wrap: anywhere;
     }
     .geocode-detail,
     .geocode-reason {
       color: #475569;
-      font-size: 12px;
+      font-size: 11px;
       line-height: 1.3;
       margin-top: 2px;
       overflow-wrap: anywhere;
@@ -117,24 +285,24 @@
     .geocode-reason {
       color: #166534;
     }
-    .search-help {
-      margin: 0 0 6px;
+    .geocode-status {
       color: #475569;
-      font-size: 12px;
-      line-height: 1.35;
+      font-size: 11px;
+      margin: 6px 1px 0;
     }
+    .geocode-status:empty { display: none; }
     .badge-row {
       display: flex;
       flex-wrap: wrap;
-      gap: 4px;
-      margin-top: 4px;
+      gap: 3px;
+      margin-top: 5px;
     }
     .badge {
       display: inline-flex;
       align-items: center;
       border-radius: 999px;
-      padding: 2px 6px;
-      font-size: 11px;
+      padding: 1px 5px;
+      font-size: 10px;
       font-weight: 700;
       background: #e2e8f0;
       color: #334155;
@@ -145,37 +313,70 @@
     .badge.fuzzy { background: #fef3c7; color: #92400e; }
     .badge.partial { background: #ede9fe; color: #6d28d9; }
     .badge.original { background: #e0f2fe; color: #0369a1; }
+    .panel-footer {
+      border-top: 1px solid #e2e8f0;
+      margin-top: 5px;
+      padding-top: 4px;
+    }
+    .geocode-results:empty { display: none; }
+    .panel-footer .muted + .muted { margin-top: 1px; }
+    @media (max-width: 740px) {
+      .panel {
+        max-height: calc(50vh - 27px);
+      }
+      .search-panel { top: 10px; right: 10px; }
+      .tools-panel { top: calc(50vh + 6px); right: 10px; bottom: auto; left: auto; }
+      .geocode-results { max-height: 25vh; }
+    }
   </style>
 </head>
 <body>
   <div id="map"></div>
-  <div class="panel">
-    <h3>OSM Search &amp; Reverse Geocoder</h3>
-    <div class="row"><strong id="houseCount">Houses: 0</strong></div>
-    <div class="row"><strong id="streetCount">Streets: 0</strong></div>
-    <div class="row"><strong id="regionCount">Regions: 0</strong></div>
-    <div class="row">
-      <label><input type="checkbox" id="showHouses" checked /> Houses</label>
-      <label><input type="checkbox" id="showStreets" /> Streets</label>
-      <label><input type="checkbox" id="showRegions" checked /> Regions</label>
-    </div>
-    <div class="row">
-      <button id="reverseToggleBtn" class="btn" type="button">Reverse Mode: OFF</button>
-    </div>
-    <div class="search-row">
-      <input id="geocodeInput" class="search-input" type="search" placeholder="Search address or place..." autocomplete="off" />
-      <button id="geocodeButton" class="btn" type="button">Search</button>
-    </div>
-    <div class="search-help">Supports exact, typo-tolerant, and partial search.</div>
-    <div id="geocodeStatus" class="geocode-status"></div>
-    <div id="geocodeResults" class="geocode-results"></div>
-    <div id="reverseResultBox" class="reverse-box" style="display:none;">
-      <div class="reverse-box-title">Reverse Geocoder</div>
-      <div id="reverseResultText">Click on the map to find nearest address.</div>
-    </div>
-    <div class="muted">Backend: <code>http://127.0.0.1:8080</code></div>
-    <div class="muted">Move/zoom map to trigger bbox queries. Enable Reverse Mode to click for reverse geocoding.</div>
-    <div class="warn" id="tileStatus" style="display:none;">Map tiles are partially blocked on this network/browser. Try disabling strict privacy/ad-block for this page.</div>
+  <div class="panel-dock">
+    <aside class="panel tools-panel" aria-label="Map tools">
+      <h3>Map Tools</h3>
+      <section class="layer-card" aria-label="Map layers">
+        <div class="layer-card-title">Map layers</div>
+        <div class="layer-counts" aria-live="polite">
+          <span id="houseCount" class="layer-count">Houses: 0</span>
+          <span id="streetCount" class="layer-count">Streets: 0</span>
+          <span id="regionCount" class="layer-count">Regions: 0</span>
+        </div>
+        <div class="layer-controls">
+          <label><input type="checkbox" id="showHouses" checked /> Houses</label>
+          <label><input type="checkbox" id="showStreets" /> Streets</label>
+          <label><input type="checkbox" id="showRegions" checked /> Regions</label>
+        </div>
+      </section>
+      <div class="row">
+        <button id="reverseToggleBtn" class="btn reverse-toggle" type="button" aria-pressed="false">
+          <span class="reverse-toggle-label">Reverse geocoding</span>
+          <span class="reverse-toggle-status"><span class="reverse-status-dot" aria-hidden="true"></span><span id="reverseModeStatus">OFF</span></span>
+        </button>
+      </div>
+      <div id="reverseResultBox" class="reverse-box" style="display:none;">
+        <div class="reverse-box-title">Reverse Geocoder</div>
+        <div id="reverseResultText">Click on the map to find nearest address.</div>
+      </div>
+      <div class="panel-footer">
+        <div class="muted">Move or zoom to update map layers.</div>
+        <div class="muted">Backend: <code>http://127.0.0.1:8080</code></div>
+        <div class="warn" id="tileStatus" style="display:none;">Map tiles are partially blocked on this network/browser. Try disabling strict privacy/ad-block for this page.</div>
+      </div>
+    </aside>
+    <section class="panel search-panel" aria-label="Place search panel">
+      <h3>OSM Search</h3>
+      <section class="search-card" aria-label="Place search">
+        <label class="search-label" for="geocodeInput">Search places</label>
+        <div class="search-row">
+          <input id="geocodeInput" class="search-input" type="search" placeholder="Search address or place..." autocomplete="off" />
+          <button id="geocodeButton" class="btn btn-primary" type="button">Search</button>
+        </div>
+        <p class="search-support">Supports exact, typo-tolerant, and partial search.</p>
+      </section>
+      <div id="geocodeStatus" class="geocode-status"></div>
+      <div id="geocodeResults" class="geocode-results"></div>
+    </section>
   </div>
 
   <script
@@ -223,6 +424,7 @@
     const showStreetsEl = document.getElementById("showStreets");
     const showRegionsEl = document.getElementById("showRegions");
     const reverseToggleBtnEl = document.getElementById("reverseToggleBtn");
+    const reverseModeStatusEl = document.getElementById("reverseModeStatus");
     const geocodeInputEl = document.getElementById("geocodeInput");
     const geocodeButtonEl = document.getElementById("geocodeButton");
     const geocodeStatusEl = document.getElementById("geocodeStatus");
@@ -379,8 +581,10 @@
 
     function setReverseMode(enabled) {
       reverseModeEnabled = enabled;
-      reverseToggleBtnEl.textContent = `Reverse Mode: ${enabled ? "ON" : "OFF"}`;
+      reverseModeStatusEl.textContent = enabled ? "ON" : "OFF";
       reverseToggleBtnEl.classList.toggle("active", enabled);
+      reverseToggleBtnEl.setAttribute("aria-pressed", String(enabled));
+      reverseToggleBtnEl.setAttribute("aria-label", `Reverse geocoding: ${enabled ? "on" : "off"}`);
       map.getContainer().style.cursor = enabled ? "crosshair" : "";
       reverseResultBoxEl.style.display = enabled ? "block" : "none";
       if (enabled) {
