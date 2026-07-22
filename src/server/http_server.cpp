@@ -16,6 +16,7 @@
 #include <csignal>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <cmath>
 #include <sstream>
@@ -187,6 +188,207 @@ double min_ring_distance_meters(const GridCellKey& center, const GridCellKey& ce
     return min_deg * 111320.0;
 }
 
+[[nodiscard]] bool point_in_polygon(const GeoPoint& point, const GeoPoint* polygon, const std::size_t n) {
+    if (n < 3) {
+        return false;
+    }
+
+    const double x = static_cast<double>(point.lon);
+    const double y = static_cast<double>(point.lat);
+    bool inside = false;
+
+    for (std::size_t i = 0, j = n - 1; i < n; j = i++) {
+        const double xi = static_cast<double>(polygon[i].lon);
+        const double yi = static_cast<double>(polygon[i].lat);
+        const double xj = static_cast<double>(polygon[j].lon);
+        const double yj = static_cast<double>(polygon[j].lat);
+
+        const bool intersect = ((yi > y) != (yj > y)) &&
+                               (x < (xj - xi) * (y - yi) / ((yj - yi) + 1e-15) + xi);
+        if (intersect) {
+            inside = !inside;
+        }
+    }
+
+    return inside;
+}
+
+[[nodiscard]] bool is_reverse_context_admin_level(const std::int32_t admin_level) {
+    return admin_level == 8 || admin_level == 6 || admin_level == 4 || admin_level == 2;
+}
+
+[[nodiscard]] std::vector<std::size_t> find_clicked_containing_regions(
+    const DataStore& data,
+    const double lat,
+    const double lon) {
+    RegionLookupOptions options;
+    options.require_name = true;
+    options.exclude_postal_regions = true;
+    options.useful_admin_levels_only = true;
+    return find_containing_regions_for_point(data, lat, lon, options);
+}
+
+[[nodiscard]] std::optional<std::size_t> find_nearest_poi(
+    const DataStore& data,
+    const double lat,
+    const double lon,
+    double& best_distance_m) {
+    constexpr double kMaxNearestPoiDistanceM = 250.0;
+    const double max_delta_deg = kMaxNearestPoiDistanceM / 111320.0;
+
+    best_distance_m = std::numeric_limits<double>::infinity();
+    std::optional<std::size_t> best_idx;
+
+    for (std::size_t i = 0; i < data.pois.size(); ++i) {
+        const auto& poi = data.pois[i];
+        if (poi.name_id == kInvalidStringId || poi.name_id >= data.strings.size()) {
+            continue;
+        }
+        if (data.strings.resolve(poi.name_id).empty()) {
+            continue;
+        }
+        if (std::abs(static_cast<double>(poi.lat) - lat) > max_delta_deg ||
+            std::abs(static_cast<double>(poi.lon) - lon) > max_delta_deg) {
+            continue;
+        }
+
+        const auto dist = haversine_meters(lat, lon, poi.lat, poi.lon);
+        if (dist <= kMaxNearestPoiDistanceM && dist < best_distance_m) {
+            best_distance_m = dist;
+            best_idx = i;
+        }
+    }
+
+    return best_idx;
+}
+
+struct NearestStreetResult {
+    std::size_t index{std::numeric_limits<std::size_t>::max()};
+    double lat{0.0};
+    double lon{0.0};
+    double distance_m{std::numeric_limits<double>::infinity()};
+};
+
+struct SegmentProjection {
+    double lat{0.0};
+    double lon{0.0};
+    double distance_m{std::numeric_limits<double>::infinity()};
+};
+
+[[nodiscard]] SegmentProjection project_point_to_street_segment(
+    const double query_lat,
+    const double query_lon,
+    const GeoPoint& a,
+    const GeoPoint& b) {
+    constexpr double kDegToRad = 3.14159265358979323846 / 180.0;
+    constexpr double kMetersPerDegreeLat = 111320.0;
+    const double meters_per_degree_lon = std::max(1e-6, kMetersPerDegreeLat * std::cos(query_lat * kDegToRad));
+
+    const double ax = (static_cast<double>(a.lon) - query_lon) * meters_per_degree_lon;
+    const double ay = (static_cast<double>(a.lat) - query_lat) * kMetersPerDegreeLat;
+    const double bx = (static_cast<double>(b.lon) - query_lon) * meters_per_degree_lon;
+    const double by = (static_cast<double>(b.lat) - query_lat) * kMetersPerDegreeLat;
+    const double vx = bx - ax;
+    const double vy = by - ay;
+    const double len_sq = vx * vx + vy * vy;
+
+    double t = 0.0;
+    if (len_sq > 0.0) {
+        t = std::clamp(-(ax * vx + ay * vy) / len_sq, 0.0, 1.0);
+    }
+
+    const double px = ax + (vx * t);
+    const double py = ay + (vy * t);
+    return SegmentProjection{
+        .lat = query_lat + (py / kMetersPerDegreeLat),
+        .lon = query_lon + (px / meters_per_degree_lon),
+        .distance_m = std::sqrt((px * px) + (py * py)),
+    };
+}
+
+[[nodiscard]] NearestStreetResult find_nearest_street(
+    const DataStore& data,
+    const double lat,
+    const double lon) {
+    constexpr double kMaxNearestStreetDistanceM = 250.0;
+    constexpr int kMaxStreetRing = 64;
+
+    NearestStreetResult best;
+    const auto center = to_grid_cell(lon, lat, data.grid.cell_size_deg);
+    std::unordered_set<std::size_t> seen;
+
+    for (int ring = 0; ring <= kMaxStreetRing; ++ring) {
+        for (int dx = -ring; dx <= ring; ++dx) {
+            for (int dy = -ring; dy <= ring; ++dy) {
+                if (ring > 0 && std::abs(dx) != ring && std::abs(dy) != ring) {
+                    continue;
+                }
+
+                const GridCellKey cell{.x = center.x + dx, .y = center.y + dy};
+                const auto it = data.grid.street_cells.find(cell);
+                if (it == data.grid.street_cells.end()) {
+                    continue;
+                }
+
+                for (const auto idx : it->second) {
+                    if (idx >= data.streets.size() || !seen.insert(idx).second) {
+                        continue;
+                    }
+
+                    const auto& street = data.streets[idx];
+                    const auto begin = static_cast<std::size_t>(street.points_begin);
+                    const auto count = static_cast<std::size_t>(street.points_count);
+                    if (count == 0 || begin >= data.street_points.size()) {
+                        continue;
+                    }
+
+                    if (count == 1 || begin + 1 >= data.street_points.size()) {
+                        const auto& point = data.street_points[begin];
+                        const auto dist = haversine_meters(lat, lon, point.lat, point.lon);
+                        if (dist < best.distance_m) {
+                            best = NearestStreetResult{
+                                .index = idx,
+                                .lat = point.lat,
+                                .lon = point.lon,
+                                .distance_m = dist,
+                            };
+                        }
+                        continue;
+                    }
+
+                    const auto usable_count = std::min(count, data.street_points.size() - begin);
+                    for (std::size_t point_offset = 1; point_offset < usable_count; ++point_offset) {
+                        const auto projection = project_point_to_street_segment(
+                            lat,
+                            lon,
+                            data.street_points[begin + point_offset - 1],
+                            data.street_points[begin + point_offset]);
+                        if (projection.distance_m < best.distance_m) {
+                            best = NearestStreetResult{
+                                .index = idx,
+                                .lat = projection.lat,
+                                .lon = projection.lon,
+                                .distance_m = projection.distance_m,
+                            };
+                        }
+                    }
+                }
+            }
+        }
+
+        const GridCellKey next_ring_probe{.x = center.x + ring + 1, .y = center.y};
+        const auto min_next = min_ring_distance_meters(center, next_ring_probe, data.grid.cell_size_deg);
+        if (min_next > std::min(best.distance_m, kMaxNearestStreetDistanceM)) {
+            break;
+        }
+    }
+
+    if (best.distance_m > kMaxNearestStreetDistanceM) {
+        return {};
+    }
+    return best;
+}
+
 std::vector<std::size_t> apply_stride_and_limit(
     const std::vector<std::size_t>& indices,
     const std::size_t stride,
@@ -258,6 +460,7 @@ std::string handle_api_request(
     }
 
     if (request.path == "/reverse") {
+        constexpr double kMaxReverseHouseDistanceM = 500.0;
         profile.route = "/reverse";
         const auto lat_param = get_query_param(request.query, "lat");
         const auto lon_param = get_query_param(request.query, "lon");
@@ -275,6 +478,10 @@ std::string handle_api_request(
             return serialize_error_json("Invalid lat/lon values");
         }
 
+        const auto clicked_regions = find_clicked_containing_regions(data, *lat, *lon);
+        double nearest_poi_distance_m = std::numeric_limits<double>::infinity();
+        const auto nearest_poi_index = find_nearest_poi(data, *lat, *lon, nearest_poi_distance_m);
+        const auto nearest_street = find_nearest_street(data, *lat, *lon);
         const auto center = to_grid_cell(*lon, *lat, data.grid.cell_size_deg);
         constexpr int kMaxRing = 64;
         double best_distance = std::numeric_limits<double>::infinity();
@@ -315,10 +522,43 @@ std::string handle_api_request(
             }
         }
 
-        if (best_idx >= data.houses.size()) {
+        if (best_idx >= data.houses.size() || best_distance > kMaxReverseHouseDistanceM) {
+            if (nearest_street.index < data.streets.size()) {
+                profile.matched = seen.size();
+                profile.returned = 1;
+                status_code = 200;
+                status_text = "OK";
+                return serialize_reverse_street_json(
+                    data,
+                    nearest_street.index,
+                    clicked_regions,
+                    nearest_poi_index,
+                    nearest_poi_distance_m,
+                    *lat,
+                    *lon,
+                    nearest_street.lat,
+                    nearest_street.lon,
+                    nearest_street.distance_m);
+            }
+
+            if (!clicked_regions.empty()) {
+                profile.matched = clicked_regions.size();
+                profile.returned = 1;
+                status_code = 200;
+                status_text = "OK";
+                return serialize_reverse_region_json(
+                    data,
+                    clicked_regions.front(),
+                    clicked_regions,
+                    nearest_poi_index,
+                    nearest_poi_distance_m,
+                    *lat,
+                    *lon);
+            }
+
             status_code = 404;
             status_text = "Not Found";
-            return serialize_error_json("No nearby house found");
+            return serialize_error_json("No nearby house, street, or region found");
         }
 
         const auto& h = data.houses[best_idx];
@@ -329,6 +569,13 @@ std::string handle_api_request(
         return serialize_reverse_json(
             data,
             best_idx,
+            clicked_regions,
+            nearest_poi_index,
+            nearest_poi_distance_m,
+            nearest_street.index < data.streets.size() ? std::optional<std::size_t>{nearest_street.index} : std::nullopt,
+            nearest_street.lat,
+            nearest_street.lon,
+            nearest_street.distance_m,
             *lat,
             *lon,
             h.lat,

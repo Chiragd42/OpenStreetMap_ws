@@ -536,8 +536,10 @@ StreetMergeStats merge_streets_in_place(DataStore& data) {
 
     std::vector<StreetPolyline> merged_streets;
     std::vector<GeoPoint> merged_points;
+    std::vector<std::uint32_t> merged_street_region_ids;
     merged_streets.reserve(data.streets.size());
     merged_points.reserve(data.street_points.size());
+    merged_street_region_ids.reserve(data.street_containing_region_ids.size());
 
     for (auto& [_, indices] : groups) {
         Dsu dsu(indices.size());
@@ -584,6 +586,8 @@ StreetMergeStats merge_streets_in_place(DataStore& data) {
 
             auto emit_trail = [&](const EndpointKey start_key) {
                 std::vector<GeoPoint> poly;
+                std::vector<std::uint32_t> region_ids;
+                std::unordered_set<std::uint32_t> seen_region_ids;
                 EndpointKey current = start_key;
                 bool has_segment = false;
 
@@ -612,6 +616,17 @@ StreetMergeStats merge_streets_in_place(DataStore& data) {
                     const auto count = static_cast<std::size_t>(s.points_count);
                     const bool forward = (current == seg_start[chosen]);
 
+                    const auto regions_begin = static_cast<std::size_t>(s.containing_regions_begin);
+                    const auto regions_count = static_cast<std::size_t>(s.containing_regions_count);
+                    if (regions_begin + regions_count <= data.street_containing_region_ids.size()) {
+                        for (std::size_t ri = 0; ri < regions_count; ++ri) {
+                            const auto region_index = data.street_containing_region_ids[regions_begin + ri];
+                            if (seen_region_ids.insert(region_index).second) {
+                                region_ids.push_back(region_index);
+                            }
+                        }
+                    }
+
                     if (forward) {
                         for (std::size_t i = 0; i < count; ++i) {
                             if (!poly.empty() && i == 0) {
@@ -639,8 +654,11 @@ StreetMergeStats merge_streets_in_place(DataStore& data) {
                     out_street.is_unnamed = data.streets[indices[comp.front()]].is_unnamed;
                     out_street.points_begin = static_cast<std::uint32_t>(merged_points.size());
                     out_street.points_count = static_cast<std::uint32_t>(poly.size());
+                    out_street.containing_regions_begin = static_cast<std::uint32_t>(merged_street_region_ids.size());
+                    out_street.containing_regions_count = static_cast<std::uint32_t>(region_ids.size());
                     out_street.bbox = bbox_from_points(poly);
                     merged_points.insert(merged_points.end(), poly.begin(), poly.end());
+                    merged_street_region_ids.insert(merged_street_region_ids.end(), region_ids.begin(), region_ids.end());
                     merged_streets.push_back(out_street);
                 }
             };
@@ -667,6 +685,7 @@ StreetMergeStats merge_streets_in_place(DataStore& data) {
 
     data.streets = std::move(merged_streets);
     data.street_points = std::move(merged_points);
+    data.street_containing_region_ids = std::move(merged_street_region_ids);
 
     data.grid.street_cells.clear();
     for (std::size_t i = 0; i < data.streets.size(); ++i) {

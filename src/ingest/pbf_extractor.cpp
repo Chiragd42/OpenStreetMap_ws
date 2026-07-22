@@ -267,6 +267,133 @@ void add_bbox_to_grid(
     }
 }
 
+[[nodiscard]] std::optional<GeoPoint> representative_point_for_region(const DataStore& data, const RegionPolygon& region) {
+    const auto begin = static_cast<std::size_t>(region.points_begin);
+    const auto count = static_cast<std::size_t>(region.points_count);
+    if (count == 0 || begin + count > data.region_points.size()) {
+        return std::nullopt;
+    }
+
+    // Use the bbox center for parent-hierarchy assignment to avoid copying/scanning every polygon ring again.
+    // This keeps preprocessing practical on the full Baden-Wuerttemberg extract while remaining a useful approximation.
+    return GeoPoint{
+        .lat = static_cast<float>((region.bbox.min_lat + region.bbox.max_lat) * 0.5),
+        .lon = static_cast<float>((region.bbox.min_lon + region.bbox.max_lon) * 0.5),
+    };
+}
+
+[[nodiscard]] bool should_assign_region_hierarchy(const DataStore& data, const RegionPolygon& region) {
+    if (region.is_postal_region || !is_useful_admin_level(region.admin_level)) {
+        return false;
+    }
+    if (region.admin_level == 2) {
+        return false;
+    }
+    if (region.name_id == kInvalidStringId || region.name_id >= data.strings.size()) {
+        return false;
+    }
+    return !data.strings.resolve(region.name_id).empty();
+}
+
+[[nodiscard]] bool is_low_value_street_for_region_sampling(const DataStore& data, const StreetPolyline& street) {
+    if (street.is_unnamed || street.name_id == kInvalidStringId) {
+        return true;
+    }
+    if (street.highway_class_id == kInvalidStringId || street.highway_class_id >= data.strings.size()) {
+        return false;
+    }
+
+    const auto& highway = data.strings.resolve(street.highway_class_id);
+    return highway == "track" ||
+           highway == "path" ||
+           highway == "footway" ||
+           highway == "cycleway" ||
+           highway == "steps" ||
+           highway == "bridleway" ||
+           highway == "service";
+}
+
+[[nodiscard]] std::vector<GeoPoint> street_sample_points(const DataStore& data, const StreetPolyline& street) {
+    constexpr std::size_t kLongStreetRegionSamples = 3;
+    constexpr std::size_t kVeryLongStreetRegionSamples = 5;
+    constexpr std::size_t kLongStreetPointThreshold = 64;
+    constexpr std::size_t kVeryLongStreetPointThreshold = 256;
+    constexpr double kLongStreetBBoxSpanDeg = 0.02;
+    constexpr double kVeryLongStreetBBoxSpanDeg = 0.10;
+    const auto begin = static_cast<std::size_t>(street.points_begin);
+    const auto count = static_cast<std::size_t>(street.points_count);
+    if (count == 0 || begin >= data.street_points.size()) {
+        return {};
+    }
+
+    const auto usable_count = std::min(count, data.street_points.size() - begin);
+    if (usable_count == 0) {
+        return {};
+    }
+
+    const auto midpoint_sample = [&]() {
+        return std::vector<GeoPoint>{data.street_points[begin + usable_count / 2]};
+    };
+
+    if (is_low_value_street_for_region_sampling(data, street)) {
+        return midpoint_sample();
+    }
+
+    const double bbox_span = std::max(
+        street.bbox.max_lon - street.bbox.min_lon,
+        street.bbox.max_lat - street.bbox.min_lat);
+
+    std::size_t target_samples = 1;
+    if (usable_count >= kVeryLongStreetPointThreshold || bbox_span >= kVeryLongStreetBBoxSpanDeg) {
+        target_samples = kVeryLongStreetRegionSamples;
+    } else if (usable_count >= kLongStreetPointThreshold || bbox_span >= kLongStreetBBoxSpanDeg) {
+        target_samples = kLongStreetRegionSamples;
+    }
+
+    if (target_samples == 1) {
+        return midpoint_sample();
+    }
+
+    std::vector<std::size_t> offsets;
+    const auto sample_count = std::min(target_samples, usable_count);
+    offsets.reserve(sample_count);
+    if (sample_count == 1) {
+        offsets.push_back(0);
+    } else {
+        for (std::size_t i = 0; i < sample_count; ++i) {
+            const auto numerator = i * (usable_count - 1);
+            const auto offset = (numerator + ((sample_count - 1) / 2)) / (sample_count - 1);
+            if (offsets.empty() || offsets.back() != offset) {
+                offsets.push_back(offset);
+            }
+        }
+    }
+
+    std::vector<GeoPoint> samples;
+    samples.reserve(offsets.size());
+    for (const auto offset : offsets) {
+        samples.push_back(data.street_points[begin + offset]);
+    }
+    return samples;
+}
+
+void sort_region_indices_by_specificity(const DataStore& data, std::vector<std::uint32_t>& region_indices) {
+    std::sort(region_indices.begin(), region_indices.end(), [&data](const std::uint32_t lhs, const std::uint32_t rhs) {
+        if (lhs >= data.regions.size() || rhs >= data.regions.size()) {
+            return lhs < rhs;
+        }
+        const auto& a = data.regions[lhs];
+        const auto& b = data.regions[rhs];
+        if (a.admin_level != b.admin_level) {
+            return a.admin_level > b.admin_level;
+        }
+        if (a.approx_area != b.approx_area) {
+            return a.approx_area < b.approx_area;
+        }
+        return lhs < rhs;
+    });
+}
+
 [[nodiscard]] std::size_t estimate_string_pool_bytes(const StringPool& pool) {
     std::size_t bytes = 0;
     for (StringId id = 0; id < pool.size(); ++id) {
@@ -782,6 +909,75 @@ ExtractionResult PbfExtractor::extract(const ExtractionConfig& config) const {
             i);
     }
 
+    const auto assign_region_hierarchy_start = std::chrono::steady_clock::now();
+    result.data.region_containing_region_ids.clear();
+    result.data.region_containing_region_ids.reserve(result.data.regions.size() * 2);
+    for (std::size_t ri = 0; ri < result.data.regions.size(); ++ri) {
+        auto& region = result.data.regions[ri];
+        region.containing_regions_begin = static_cast<std::uint32_t>(result.data.region_containing_region_ids.size());
+        region.containing_regions_count = 0;
+
+        if (!should_assign_region_hierarchy(result.data, region)) {
+            continue;
+        }
+
+        const auto representative = representative_point_for_region(result.data, region);
+        if (!representative.has_value()) {
+            continue;
+        }
+
+        RegionLookupOptions options;
+        options.skip_region_index = ri;
+        options.broader_than_admin_level = region.admin_level;
+        const auto parents = find_containing_regions_for_point(
+            result.data,
+            representative->lat,
+            representative->lon,
+            options);
+
+        for (const auto parent_index : parents) {
+            if (parent_index >= result.data.regions.size()) {
+                continue;
+            }
+            result.data.region_containing_region_ids.push_back(static_cast<std::uint32_t>(parent_index));
+            ++region.containing_regions_count;
+        }
+    }
+    std::cout << "[RegionHierarchy] assignment_seconds: "
+              << std::chrono::duration<double>(std::chrono::steady_clock::now() - assign_region_hierarchy_start).count()
+              << " parent_links: " << result.data.region_containing_region_ids.size() << '\n';
+
+    const auto assign_street_regions_start = std::chrono::steady_clock::now();
+    result.data.street_containing_region_ids.clear();
+    result.data.street_containing_region_ids.reserve(result.data.streets.size() * 2);
+    for (std::size_t si = 0; si < result.data.streets.size(); ++si) {
+        auto& street = result.data.streets[si];
+        street.containing_regions_begin = static_cast<std::uint32_t>(result.data.street_containing_region_ids.size());
+        street.containing_regions_count = 0;
+
+        std::vector<std::uint32_t> region_ids;
+        std::unordered_set<std::uint32_t> seen_region_ids;
+        for (const auto& sample : street_sample_points(result.data, street)) {
+            const auto containing_regions = find_containing_regions_for_point(result.data, sample.lat, sample.lon);
+            for (const auto ridx : containing_regions) {
+                if (ridx >= result.data.regions.size()) continue;
+                const auto casted = static_cast<std::uint32_t>(ridx);
+                if (seen_region_ids.insert(casted).second) {
+                    region_ids.push_back(casted);
+                }
+            }
+        }
+        sort_region_indices_by_specificity(result.data, region_ids);
+        street.containing_regions_count = static_cast<std::uint32_t>(region_ids.size());
+        result.data.street_containing_region_ids.insert(
+            result.data.street_containing_region_ids.end(),
+            region_ids.begin(),
+            region_ids.end());
+    }
+    std::cout << "[StreetRegionAssignment] assignment_seconds: "
+              << std::chrono::duration<double>(std::chrono::steady_clock::now() - assign_street_regions_start).count()
+              << " region_links: " << result.data.street_containing_region_ids.size() << '\n';
+
     const auto assign_pois_start = std::chrono::steady_clock::now();
     result.data.poi_containing_region_ids.clear();
     result.data.poi_containing_region_ids.reserve(result.data.pois.size() * 2);
@@ -790,32 +986,9 @@ ExtractionResult PbfExtractor::extract(const ExtractionConfig& config) const {
         poi.containing_regions_begin = static_cast<std::uint32_t>(result.data.poi_containing_region_ids.size());
         poi.containing_regions_count = 0;
 
-        const auto key = to_grid_cell(poi.lon, poi.lat, result.data.grid.cell_size_deg);
-        const auto it = result.data.grid.region_cells.find(key);
-        if (it == result.data.grid.region_cells.end()) {
-            ++result.stats.pois_without_region;
-            continue;
-        }
-
-        std::unordered_set<std::size_t> dedup;
-        dedup.reserve(it->second.size());
-        const GeoPoint pp{.lat = poi.lat, .lon = poi.lon};
-        for (const auto ridx : it->second) {
-            if (!dedup.insert(ridx).second || ridx >= result.data.regions.size()) {
-                continue;
-            }
-            const auto& region = result.data.regions[ridx];
-            if (!region.bbox.contains(poi.lon, poi.lat)) {
-                continue;
-            }
-            const auto begin = static_cast<std::size_t>(region.points_begin);
-            const auto count = static_cast<std::size_t>(region.points_count);
-            if (begin + count > result.data.region_points.size() || count < 3) {
-                continue;
-            }
-            if (!point_in_polygon(pp, result.data.region_points.data() + begin, count)) {
-                continue;
-            }
+        const auto containing_regions = find_containing_regions_for_point(result.data, poi.lat, poi.lon);
+        for (const auto ridx : containing_regions) {
+            if (ridx >= result.data.regions.size()) continue;
             result.data.poi_containing_region_ids.push_back(static_cast<std::uint32_t>(ridx));
             ++poi.containing_regions_count;
         }
@@ -838,24 +1011,9 @@ ExtractionResult PbfExtractor::extract(const ExtractionConfig& config) const {
         locality.containing_regions_begin = static_cast<std::uint32_t>(result.data.locality_containing_region_ids.size());
         locality.containing_regions_count = 0;
 
-        const auto key = to_grid_cell(locality.lon, locality.lat, result.data.grid.cell_size_deg);
-        const auto it = result.data.grid.region_cells.find(key);
-        if (it == result.data.grid.region_cells.end()) {
-            ++result.stats.localities_without_region;
-            continue;
-        }
-
-        std::unordered_set<std::size_t> dedup;
-        dedup.reserve(it->second.size());
-        const GeoPoint lp{.lat = locality.lat, .lon = locality.lon};
-        for (const auto ridx : it->second) {
-            if (!dedup.insert(ridx).second || ridx >= result.data.regions.size()) continue;
-            const auto& region = result.data.regions[ridx];
-            if (!region.bbox.contains(locality.lon, locality.lat)) continue;
-            const auto begin = static_cast<std::size_t>(region.points_begin);
-            const auto count = static_cast<std::size_t>(region.points_count);
-            if (begin + count > result.data.region_points.size() || count < 3) continue;
-            if (!point_in_polygon(lp, result.data.region_points.data() + begin, count)) continue;
+        const auto containing_regions = find_containing_regions_for_point(result.data, locality.lat, locality.lon);
+        for (const auto ridx : containing_regions) {
+            if (ridx >= result.data.regions.size()) continue;
             result.data.locality_containing_region_ids.push_back(static_cast<std::uint32_t>(ridx));
             ++locality.containing_regions_count;
         }
@@ -1006,8 +1164,11 @@ ExtractionResult PbfExtractor::extract(const ExtractionConfig& config) const {
         (result.data.localities.size() * sizeof(LocalityPoint)) +
         (result.data.regions.size() * sizeof(RegionPolygon)) +
         (result.data.region_points.size() * sizeof(GeoPoint)) +
+        (result.data.house_containing_region_ids.size() * sizeof(std::uint32_t)) +
+        (result.data.street_containing_region_ids.size() * sizeof(std::uint32_t)) +
         (result.data.poi_containing_region_ids.size() * sizeof(std::uint32_t)) +
         (result.data.locality_containing_region_ids.size() * sizeof(std::uint32_t)) +
+        (result.data.region_containing_region_ids.size() * sizeof(std::uint32_t)) +
         estimate_string_pool_bytes(result.data.strings);
 
     result.stats.parse_seconds = stopwatch.elapsed_seconds();

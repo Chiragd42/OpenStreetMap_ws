@@ -1,5 +1,3 @@
-# OpenStreetMap Geocoder
-
 Local C++ geocoder for the Baden-Wuerttemberg OpenStreetMap extract. The app loads OSM data from a PBF or a binary cache, builds search indexes, serves map data over HTTP, supports reverse geocoding, and exposes a forward geocoder through both `/geocode` and the Leaflet UI.
 
 ## Quick Start
@@ -13,7 +11,7 @@ make prep
 Start the backend:
 
 ```sh
-make server CACHE=data/cache/baden-wuerttemberg-v4.bin
+make server CACHE=data/cache/baden-wuerttemberg.bin
 ```
 
 Start the frontend from a second terminal:
@@ -37,13 +35,14 @@ cmake --build build-release -j2
 ./build-release/normalizer_tests
 ./build-release/search_index_tests
 ./build-release/geocode_query_tests
+./build-release/json_tests
 ```
 
 Run a forward-geocode query directly from the cache:
 
 ```sh
 ./build-release/osm_geocoder \
-  --load-cache=data/cache/baden-wuerttemberg-v4.bin \
+  --load-cache=data/cache/baden-wuerttemberg.bin \
   --no-merge-streets \
   --test-geocode-query="Aalen Bahnhofstrasse 10"
 ```
@@ -52,7 +51,7 @@ Run the HTTP server:
 
 ```sh
 ./build-release/osm_geocoder \
-  --load-cache=data/cache/baden-wuerttemberg-v4.bin \
+  --load-cache=data/cache/baden-wuerttemberg.bin \
   --serve \
   --port=8080
 ```
@@ -64,6 +63,7 @@ curl "http://localhost:8080/geocode?q=Aalen%20Bahnhofstrasse%2010"
 curl "http://localhost:8080/geocode?q=Bahnhofstrasse%2010%20Aalen"
 curl "http://localhost:8080/geocode?q=Stuttgart%20Burger%20King"
 curl "http://localhost:8080/geocode?q=Burger%20King%20Stuttgart"
+curl "http://localhost:8080/geocode?q=Baden%20Wuerttemberg"
 curl "http://localhost:8080/reverse?lat=48.8391&lon=10.0948"
 ```
 
@@ -82,8 +82,10 @@ Level 2 and level 4 administrative regions are reconstructed where possible from
 The extractor precomputes containment lists:
 
 - house -> containing administrative regions
+- street -> containing administrative regions, using multiple sampled points along the street geometry
 - POI -> containing administrative regions
 - locality -> containing administrative regions
+- administrative region -> broader parent administrative regions
 
 These lists make forward geocoder ranking deterministic without doing point-in-polygon work per query.
 
@@ -109,7 +111,7 @@ Examples:
 The backend builds several indexes from the loaded `DataStore`:
 
 - exact-name index for POIs, streets, regions, and localities
-- token inverted index for broad named-object lookup
+- token inverted index for broad named-object lookup, including region candidates
 - region-name index
 - locality-name index
 - exact address index keyed by normalized street name plus normalized house number
@@ -144,6 +146,8 @@ Expected examples:
 
 - `Aalen Bahnhofstrasse 10`: first result is `Bahnhofstraße 10`, city `Aalen`, shared relation `Aalen`, admin level 8.
 - `Stuttgart Burger King`: first results are `Burger King` POIs sharing relation `Stuttgart`, admin level 6.
+- `Aalen Marktstrasse`: street candidates can be ranked by their containing administrative region.
+- `Baden Wuerttemberg`: administrative regions are returned as named-object candidates.
 - `CompletelyUnknownTown Bahnhofstrasse 10`: returns global `Bahnhofstraße 10` candidates with `locality_recognized: false`.
 
 ## HTTP API
@@ -173,7 +177,7 @@ Missing `q` returns `400`. Empty `q` and punctuation-only queries return the nor
 
 ### `GET /reverse?lat=<lat>&lon=<lon>`
 
-Returns the nearest address point and the distance in meters. The reverse geocoder uses the spatial grid over house points and is independent from the forward geocoder's `geocodeLayer` in the UI.
+Returns the clicked query point, administrative context for the clicked point, nearest POI context, nearest street context, and the best reverse result. If a nearby house is available, `nearest.type` is `house`; otherwise the endpoint falls back to a nearby street result with `nearest.type` set to `street`. If no nearby house or street is available but the click is inside administrative regions, it returns the most specific region as `nearest.type = "region"`. The reverse geocoder uses the spatial grids over house points, street polylines, and regions, and is independent from the forward geocoder's `geocodeLayer` in the UI.
 
 ### BBox Endpoints
 
@@ -200,11 +204,12 @@ Reverse mode:
 
 - remains controlled by `Reverse Mode: ON/OFF`
 - draws clicked point, nearest address, and connecting line on a separate `reverseLayer`
+- displays house results, street fallback results, and region fallback results distinctly
 - is not mixed with forward geocoder markers
 
 ## Binary Cache
 
-The cache format uses magic `OSMC` and the current supported cache version is 4. Version 4 stores the data required by the forward geocoder, including POIs, localities, administrative regions, and precomputed containment arrays.
+The cache format uses magic `OSMC` and the current supported cache version is 6. Version 6 stores the data required by the forward and reverse geocoder, including POIs, localities, administrative regions, street containment, region-parent containment, and precomputed containment arrays.
 
 Older cache versions are rejected. For example, loading a version 2 cache fails cleanly with:
 
@@ -217,7 +222,7 @@ Regenerate a current cache with:
 ```sh
 ./build-release/osm_geocoder \
   --pbf=data/pbf/baden-wuerttemberg-260602.osm.pbf \
-  --save-cache=data/cache/baden-wuerttemberg-v4.bin \
+  --save-cache=data/cache/baden-wuerttemberg.bin \
   --no-merge-streets \
   --test-geocode-query="Aalen Bahnhofstrasse 10"
 ```
@@ -239,7 +244,7 @@ Startup logs and `/stats` expose the main operational metrics:
 - `/reverse` request timing in the HTTP request log
 - cache save confirmation when `--save-cache` succeeds
 
-Representative Baden-Wuerttemberg v4 cache validation:
+- Representative Baden-Wuerttemberg cache validation:
 
 - nodes: 56,144,314
 - ways: 9,164,239
@@ -262,6 +267,8 @@ Burger King Stuttgart
 Königstraße 1 Stuttgart
 Hauptstr. 10 Aalen
 CompletelyUnknownTown Bahnhofstrasse 10
+Baden Wuerttemberg
+Aalen Marktstrasse
 ```
 
 Required checks:
@@ -270,7 +277,9 @@ Required checks:
 - `Bahnhofstrasse 10 Aalen` ranks the same address first.
 - `Stuttgart Burger King` and `Burger King Stuttgart` rank Stuttgart Burger King POIs first.
 - unknown locality fallback still returns global exact-address candidates.
-- `/reverse` still returns the nearest address.
+- region-name queries return administrative region candidates.
+- street-name queries with localities prefer street candidates sharing that locality.
+- `/reverse` returns the nearest house when available, falls back to nearest street when no nearby house is available, and falls back to the clicked administrative region in empty areas.
 - GUI search shows results and markers.
 - GUI reverse mode still works independently.
 - old cache versions are rejected cleanly.
@@ -281,6 +290,8 @@ Required checks:
 - Ranking does not yet prioritize current map viewport.
 - Street geometry is represented in the forward API by a representative point, not a returned polyline.
 - Duplicate OSM-derived address points may appear when multiple source geometries represent the same address.
+- Street-to-region assignment is still an approximation: it samples capped points along each street rather than intersecting the full street geometry with every administrative polygon.
+- Full polygon intersection detection, constructing overlap polygons, hierarchy-based point-in-polygon acceleration, and robust multipolygon repair are future work.
 - The frontend is intentionally lightweight and served separately with `python3 -m http.server`.
 
 ## Generated Files

@@ -84,6 +84,8 @@ int main() {
     expect_eq_size(index.token_index.at("king").size(), 2, "king token postings");
     expect_eq_size(index.token_index.at("oberer").size(), 1, "oberer token postings");
     expect_eq_size(index.token_index.at("grundweg").size(), 1, "grundweg token postings");
+    expect_eq_size(index.exact_name_index.at("stuttgart").size(), 1, "stuttgart region exact postings");
+    expect_eq_size(index.token_index.at("stuttgart").size(), 1, "stuttgart region token postings");
     expect_eq_size(index.region_name_index.at("stuttgart").size(), 1, "stuttgart region postings");
     const auto address_key = osm::search::makeAddressKey("bahnhofstrasse", "10a");
     expect_eq_size(index.address_index.at(address_key).size(), 1, "address postings");
