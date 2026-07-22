@@ -102,3 +102,12 @@ target_link_libraries(geocode_query_tests
     PRIVATE
         geocoder_core
 )
+
+add_executable(json_tests
+    tests/json_tests.cpp
+)
+
+target_link_libraries(json_tests
+    PRIVATE
+        geocoder_core
+)

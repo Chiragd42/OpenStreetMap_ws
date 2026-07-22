@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <cmath>
 #include <limits>
@@ -101,6 +102,8 @@ struct StreetPolyline {
     bool is_unnamed{false};
     std::uint32_t points_begin{0};
     std::uint32_t points_count{0};
+    std::uint32_t containing_regions_begin{0};
+    std::uint32_t containing_regions_count{0};
     BBox bbox{};
 };
 
@@ -146,8 +149,18 @@ struct RegionPolygon {
     bool is_postal_region{false};
     std::uint32_t points_begin{0};
     std::uint32_t points_count{0};
+    std::uint32_t containing_regions_begin{0};
+    std::uint32_t containing_regions_count{0};
     BBox bbox{};
     double approx_area{0.0};
+};
+
+struct RegionLookupOptions {
+    bool require_name{true};
+    bool exclude_postal_regions{true};
+    bool useful_admin_levels_only{true};
+    std::size_t skip_region_index{std::numeric_limits<std::size_t>::max()};
+    std::int32_t broader_than_admin_level{-1};
 };
 
 struct GridCellKey {
@@ -184,12 +197,20 @@ struct DataStore {
     std::vector<RegionPolygon> regions;
     std::vector<GeoPoint> region_points;
     std::vector<std::uint32_t> house_containing_region_ids;
+    std::vector<std::uint32_t> street_containing_region_ids;
     std::vector<std::uint32_t> poi_containing_region_ids;
     std::vector<std::uint32_t> locality_containing_region_ids;
+    std::vector<std::uint32_t> region_containing_region_ids;
     SpatialGridIndex grid;
 };
 
 [[nodiscard]] GridCellKey to_grid_cell(double lon, double lat, float cell_size_deg);
 [[nodiscard]] std::vector<GridCellKey> grid_cells_for_bbox(const BBox& bbox, float cell_size_deg);
+[[nodiscard]] bool is_useful_admin_level(std::int32_t admin_level) noexcept;
+[[nodiscard]] std::vector<std::size_t> find_containing_regions_for_point(
+    const DataStore& data,
+    double lat,
+    double lon,
+    const RegionLookupOptions& options = {});
 
 } // namespace osm

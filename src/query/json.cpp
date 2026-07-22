@@ -63,6 +63,30 @@ const char* search_object_type_json(const SearchObjectType type) {
     return "unknown";
 }
 
+const char* poi_category_json(const PoiCategory category) {
+    switch (category) {
+        case PoiCategory::Shop: return "shop";
+        case PoiCategory::Restaurant: return "restaurant";
+        case PoiCategory::Cafe: return "cafe";
+        case PoiCategory::FastFood: return "fast_food";
+        case PoiCategory::Park: return "park";
+        case PoiCategory::Hotel: return "hotel";
+        case PoiCategory::School: return "school";
+        case PoiCategory::Hospital: return "hospital";
+        case PoiCategory::Station: return "station";
+        case PoiCategory::Other: return "other";
+    }
+    return "other";
+}
+
+const char* osm_element_type_json(const OsmElementType type) {
+    switch (type) {
+        case OsmElementType::Node: return "node";
+        case OsmElementType::Way: return "way";
+    }
+    return "unknown";
+}
+
 std::string geocode_object_name(const DataStore& data, const SearchObjectRef& ref) {
     switch (ref.type) {
         case SearchObjectType::House: {
@@ -192,6 +216,233 @@ void serialize_house_containing_regions(
             << '}';
     }
     out << "]";
+}
+
+void serialize_street_containing_regions(
+    std::ostringstream& out,
+    const DataStore& data,
+    const std::size_t street_index) {
+    out << "[";
+    if (street_index >= data.streets.size()) {
+        out << "]";
+        return;
+    }
+
+    const auto& street = data.streets[street_index];
+    const auto begin = static_cast<std::size_t>(street.containing_regions_begin);
+    const auto count = static_cast<std::size_t>(street.containing_regions_count);
+    if (begin + count > data.street_containing_region_ids.size()) {
+        out << "]";
+        return;
+    }
+
+    bool first = true;
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto region_index = static_cast<std::size_t>(data.street_containing_region_ids[begin + i]);
+        if (region_index >= data.regions.size()) {
+            continue;
+        }
+        const auto& region = data.regions[region_index];
+        if (!first) {
+            out << ',';
+        }
+        first = false;
+        out << '{'
+            << "\"name\":\"" << escape_json(resolve_string_or_empty(data.strings, region.name_id)) << "\","
+            << "\"admin_level\":" << region.admin_level << ','
+            << "\"relation_id\":" << region.source_relation_id
+            << '}';
+    }
+    out << "]";
+}
+
+void serialize_region_containing_regions(
+    std::ostringstream& out,
+    const DataStore& data,
+    const std::size_t region_index) {
+    out << "[";
+    if (region_index >= data.regions.size()) {
+        out << "]";
+        return;
+    }
+
+    const auto& region = data.regions[region_index];
+    const auto begin = static_cast<std::size_t>(region.containing_regions_begin);
+    const auto count = static_cast<std::size_t>(region.containing_regions_count);
+    if (begin + count > data.region_containing_region_ids.size()) {
+        out << "]";
+        return;
+    }
+
+    bool first = true;
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto parent_index = static_cast<std::size_t>(data.region_containing_region_ids[begin + i]);
+        if (parent_index >= data.regions.size()) {
+            continue;
+        }
+        const auto& parent = data.regions[parent_index];
+        if (!first) {
+            out << ',';
+        }
+        first = false;
+        out << '{'
+            << "\"name\":\"" << escape_json(resolve_string_or_empty(data.strings, parent.name_id)) << "\","
+            << "\"admin_level\":" << parent.admin_level << ','
+            << "\"relation_id\":" << parent.source_relation_id
+            << '}';
+    }
+    out << "]";
+}
+
+void serialize_region_object(
+    std::ostringstream& out,
+    const DataStore& data,
+    const std::size_t region_index,
+    const double query_lat,
+    const double query_lon) {
+    if (region_index >= data.regions.size()) {
+        out << "null";
+        return;
+    }
+
+    const auto& region = data.regions[region_index];
+    out << '{'
+        << "\"type\":\"region\","
+        << "\"name\":\"" << escape_json(resolve_string_or_empty(data.strings, region.name_id)) << "\","
+        << "\"admin_level\":" << region.admin_level << ','
+        << "\"relation_id\":" << region.source_relation_id << ','
+        << "\"lat\":" << query_lat << ','
+        << "\"lon\":" << query_lon << ','
+        << "\"distance_m\":0,"
+        << "\"containing_regions\":";
+    serialize_region_containing_regions(out, data, region_index);
+    out << '}';
+}
+
+void serialize_street_object(
+    std::ostringstream& out,
+    const DataStore& data,
+    const std::size_t street_index,
+    const double result_lat,
+    const double result_lon,
+    const double distance_m) {
+    if (street_index >= data.streets.size()) {
+        out << "null";
+        return;
+    }
+
+    const auto& street = data.streets[street_index];
+    out << '{'
+        << "\"type\":\"street\","
+        << "\"name\":\"" << escape_json(resolve_string_or_empty(data.strings, street.name_id)) << "\","
+        << "\"highway\":\"" << escape_json(resolve_string_or_empty(data.strings, street.highway_class_id)) << "\","
+        << "\"is_unnamed\":" << (street.is_unnamed ? "true" : "false") << ','
+        << "\"lat\":" << result_lat << ','
+        << "\"lon\":" << result_lon << ','
+        << "\"distance_m\":" << distance_m << ','
+        << "\"containing_regions\":";
+    serialize_street_containing_regions(out, data, street_index);
+    out << '}';
+}
+
+void serialize_region_indices(
+    std::ostringstream& out,
+    const DataStore& data,
+    const std::vector<std::size_t>& region_indices) {
+    out << "[";
+
+    bool first = true;
+    for (const auto region_index : region_indices) {
+        if (region_index >= data.regions.size()) {
+            continue;
+        }
+
+        const auto& region = data.regions[region_index];
+        if (region.name_id == kInvalidStringId || region.name_id >= data.strings.size()) {
+            continue;
+        }
+
+        const auto name = resolve_string_or_empty(data.strings, region.name_id);
+        if (name.empty()) {
+            continue;
+        }
+
+        if (!first) {
+            out << ',';
+        }
+        first = false;
+        out << '{'
+            << "\"name\":\"" << escape_json(name) << "\","
+            << "\"admin_level\":" << region.admin_level << ','
+            << "\"relation_id\":" << region.source_relation_id
+            << '}';
+    }
+
+    out << "]";
+}
+
+void serialize_poi_containing_regions(
+    std::ostringstream& out,
+    const DataStore& data,
+    const std::size_t poi_index) {
+    out << "[";
+    if (poi_index >= data.pois.size()) {
+        out << "]";
+        return;
+    }
+
+    const auto& poi = data.pois[poi_index];
+    const auto begin = static_cast<std::size_t>(poi.containing_regions_begin);
+    const auto count = static_cast<std::size_t>(poi.containing_regions_count);
+    if (begin + count > data.poi_containing_region_ids.size()) {
+        out << "]";
+        return;
+    }
+
+    bool first = true;
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto region_index = static_cast<std::size_t>(data.poi_containing_region_ids[begin + i]);
+        if (region_index >= data.regions.size()) {
+            continue;
+        }
+        const auto& region = data.regions[region_index];
+        if (!first) {
+            out << ',';
+        }
+        first = false;
+        out << '{'
+            << "\"name\":\"" << escape_json(resolve_string_or_empty(data.strings, region.name_id)) << "\","
+            << "\"admin_level\":" << region.admin_level << ','
+            << "\"relation_id\":" << region.source_relation_id
+            << '}';
+    }
+    out << "]";
+}
+
+void serialize_nearest_poi(
+    std::ostringstream& out,
+    const DataStore& data,
+    const std::optional<std::size_t> nearest_poi_index,
+    const double nearest_poi_distance_m) {
+    if (!nearest_poi_index.has_value() || *nearest_poi_index >= data.pois.size()) {
+        out << "null";
+        return;
+    }
+
+    const auto& poi = data.pois[*nearest_poi_index];
+    out << '{'
+        << "\"type\":\"poi\","
+        << "\"name\":\"" << escape_json(resolve_string_or_empty(data.strings, poi.name_id)) << "\","
+        << "\"category\":\"" << poi_category_json(poi.category) << "\","
+        << "\"subtype\":\"" << escape_json(resolve_string_or_empty(data.strings, poi.subtype_id)) << "\","
+        << "\"osm_type\":\"" << osm_element_type_json(poi.osm_type) << "\","
+        << "\"osm_id\":" << poi.osm_id << ','
+        << "\"lat\":" << poi.lat << ','
+        << "\"lon\":" << poi.lon << ','
+        << "\"distance_m\":" << nearest_poi_distance_m << ','
+        << "\"containing_regions\":";
+    serialize_poi_containing_regions(out, data, *nearest_poi_index);
+    out << '}';
 }
 
 void serialize_bbox_metadata(
@@ -369,7 +620,9 @@ std::string serialize_streets_json(
             << "\"name\":\"" << name << "\"," 
             << "\"highway\":\"" << highway << "\"," 
             << "\"is_unnamed\":" << (s.is_unnamed ? "true" : "false") << ','
-            << "\"points\":[";
+            << "\"containing_regions\":";
+        serialize_street_containing_regions(out, data, idx);
+        out << ",\"points\":[";
 
         bool first_point = true;
         for (std::uint32_t j = 0; j < s.points_count; ++j) {
@@ -423,6 +676,9 @@ std::string serialize_regions_json(
         out << '{'
             << "\"name\":\"" << name << "\","
             << "\"admin_level\":" << r.admin_level << ','
+            << "\"containing_regions\":";
+        serialize_region_containing_regions(out, data, idx);
+        out << ','
             << "\"points\":[";
 
         bool first_point = true;
@@ -529,6 +785,13 @@ std::string serialize_error_json(std::string_view message) {
 std::string serialize_reverse_json(
     const DataStore& data,
     const std::size_t house_index,
+    const std::vector<std::size_t>& clicked_region_indices,
+    const std::optional<std::size_t> nearest_poi_index,
+    const double nearest_poi_distance_m,
+    const std::optional<std::size_t> nearest_street_index,
+    const double nearest_street_lat,
+    const double nearest_street_lon,
+    const double nearest_street_distance_m,
     const double query_lat,
     const double query_lon,
     const double result_lat,
@@ -556,6 +819,68 @@ std::string serialize_reverse_json(
         << "\"country\":\"" << escape_json(country) << "\""
         << "},\"containing_regions\":";
     serialize_house_containing_regions(out, data, house_index);
+    out << ",\"clicked_containing_regions\":";
+    serialize_region_indices(out, data, clicked_region_indices);
+    out << ",\"nearest_poi\":";
+    serialize_nearest_poi(out, data, nearest_poi_index, nearest_poi_distance_m);
+    out << ",\"nearest_street\":";
+    if (nearest_street_index.has_value()) {
+        serialize_street_object(out, data, *nearest_street_index, nearest_street_lat, nearest_street_lon, nearest_street_distance_m);
+    } else {
+        out << "null";
+    }
+    out << '}';
+    return out.str();
+}
+
+std::string serialize_reverse_street_json(
+    const DataStore& data,
+    const std::size_t street_index,
+    const std::vector<std::size_t>& clicked_region_indices,
+    const std::optional<std::size_t> nearest_poi_index,
+    const double nearest_poi_distance_m,
+    const double query_lat,
+    const double query_lon,
+    const double result_lat,
+    const double result_lon,
+    const double distance_m) {
+    std::ostringstream out;
+    out << '{'
+        << "\"query\":{\"lat\":" << query_lat << ",\"lon\":" << query_lon << "},"
+        << "\"nearest\":";
+    serialize_street_object(out, data, street_index, result_lat, result_lon, distance_m);
+    out << ",\"containing_regions\":";
+    serialize_street_containing_regions(out, data, street_index);
+    out << ",\"clicked_containing_regions\":";
+    serialize_region_indices(out, data, clicked_region_indices);
+    out << ",\"nearest_poi\":";
+    serialize_nearest_poi(out, data, nearest_poi_index, nearest_poi_distance_m);
+    out << ",\"nearest_street\":";
+    serialize_street_object(out, data, street_index, result_lat, result_lon, distance_m);
+    out << '}';
+    return out.str();
+}
+
+std::string serialize_reverse_region_json(
+    const DataStore& data,
+    const std::size_t region_index,
+    const std::vector<std::size_t>& clicked_region_indices,
+    const std::optional<std::size_t> nearest_poi_index,
+    const double nearest_poi_distance_m,
+    const double query_lat,
+    const double query_lon) {
+    std::ostringstream out;
+    out << '{'
+        << "\"query\":{\"lat\":" << query_lat << ",\"lon\":" << query_lon << "},"
+        << "\"nearest\":";
+    serialize_region_object(out, data, region_index, query_lat, query_lon);
+    out << ",\"containing_regions\":";
+    serialize_region_containing_regions(out, data, region_index);
+    out << ",\"clicked_containing_regions\":";
+    serialize_region_indices(out, data, clicked_region_indices);
+    out << ",\"nearest_poi\":";
+    serialize_nearest_poi(out, data, nearest_poi_index, nearest_poi_distance_m);
+    out << ",\"nearest_street\":null";
     out << '}';
     return out.str();
 }

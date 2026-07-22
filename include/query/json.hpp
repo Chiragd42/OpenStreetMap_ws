@@ -36,6 +36,13 @@ namespace osm {
 [[nodiscard]] std::string serialize_reverse_json(
     const DataStore& data,
     std::size_t house_index,
+    const std::vector<std::size_t>& clicked_region_indices,
+    std::optional<std::size_t> nearest_poi_index,
+    double nearest_poi_distance_m,
+    std::optional<std::size_t> nearest_street_index,
+    double nearest_street_lat,
+    double nearest_street_lon,
+    double nearest_street_distance_m,
     double query_lat,
     double query_lon,
     double result_lat,
@@ -47,6 +54,25 @@ namespace osm {
     std::string_view state,
     std::string_view postcode,
     std::string_view country);
+[[nodiscard]] std::string serialize_reverse_street_json(
+    const DataStore& data,
+    std::size_t street_index,
+    const std::vector<std::size_t>& clicked_region_indices,
+    std::optional<std::size_t> nearest_poi_index,
+    double nearest_poi_distance_m,
+    double query_lat,
+    double query_lon,
+    double result_lat,
+    double result_lon,
+    double distance_m);
+[[nodiscard]] std::string serialize_reverse_region_json(
+    const DataStore& data,
+    std::size_t region_index,
+    const std::vector<std::size_t>& clicked_region_indices,
+    std::optional<std::size_t> nearest_poi_index,
+    double nearest_poi_distance_m,
+    double query_lat,
+    double query_lon);
 [[nodiscard]] std::string serialize_error_json(std::string_view message);
 
 } // namespace osm

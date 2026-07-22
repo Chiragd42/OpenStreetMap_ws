@@ -227,6 +227,9 @@ SearchIndexBuildResult buildSearchIndex(const DataStore& data) {
         }
 
         index.region_name_index[normalized].push_back(i);
+        const SearchObjectRef ref{.type = SearchObjectType::Region, .index = i};
+        add_exact_name(index, normalized, ref);
+        add_tokens(index, normalized, ref);
         ++metrics.indexed_regions;
         std::ostringstream example;
         example << "region_index=" << i << " admin_level=" << region.admin_level << " name=\"" << original_name << "\" normalized=\"" << normalized << "\"";

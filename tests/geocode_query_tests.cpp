@@ -93,6 +93,27 @@ std::uint32_t add_poi(osm::DataStore& data, const std::string& name, const float
     return static_cast<std::uint32_t>(data.pois.size() - 1);
 }
 
+std::uint32_t add_street(osm::DataStore& data, const std::string& name, const float lat, const float lon, std::initializer_list<std::uint32_t> regions) {
+    osm::StreetPolyline street;
+    street.name_id = data.strings.intern(name);
+    street.highway_class_id = data.strings.intern("residential");
+    street.points_begin = static_cast<std::uint32_t>(data.street_points.size());
+    street.points_count = 2;
+    street.containing_regions_begin = static_cast<std::uint32_t>(data.street_containing_region_ids.size());
+    street.containing_regions_count = static_cast<std::uint32_t>(regions.size());
+    street.bbox.min_lat = static_cast<double>(lat) - 0.001;
+    street.bbox.max_lat = static_cast<double>(lat) + 0.001;
+    street.bbox.min_lon = static_cast<double>(lon) - 0.001;
+    street.bbox.max_lon = static_cast<double>(lon) + 0.001;
+    for (const auto idx : regions) {
+        data.street_containing_region_ids.push_back(idx);
+    }
+    data.street_points.push_back(osm::GeoPoint{.lat = lat, .lon = lon});
+    data.street_points.push_back(osm::GeoPoint{.lat = static_cast<float>(lat + 0.001F), .lon = static_cast<float>(lon + 0.001F)});
+    data.streets.push_back(street);
+    return static_cast<std::uint32_t>(data.streets.size() - 1);
+}
+
 osm::DataStore make_test_data() {
     osm::DataStore data;
     const auto bw = add_region(data, "Baden-Württemberg", 100, 4);
@@ -126,6 +147,9 @@ osm::DataStore make_test_data() {
     add_poi(data, "Burger King", 48.783F, 9.183F, {stuttgart, bw});
     add_poi(data, "Burger King", 48.843F, 10.093F, {aalen, bw});
     add_poi(data, "Studio 54", 48.784F, 9.184F, {stuttgart, bw});
+
+    add_street(data, "Marktstraße", 48.845F, 10.095F, {stuttgart, bw});
+    add_street(data, "Marktstraße", 48.780F, 9.180F, {aalen, bw});
     return data;
 }
 
@@ -209,6 +233,18 @@ int main() {
     expect_true(!fragment.ranked_candidates.empty(), "fragmentstadt has candidates");
     expect_eq_u32(fragment.ranked_candidates.front().ref.index, 7, "fragmentstadt top house");
     expect_eq_i32(fragment.ranked_candidates.front().shared_admin_level, 8, "fragmentstadt duplicate relation level 8 match");
+
+    const auto street = osm::search::runGeocodeQuery(data, index, "Aalen Marktstrasse");
+    expect_true(!street.ranked_candidates.empty(), "street locality has candidates");
+    expect_true(street.ranked_candidates.front().ref.type == osm::SearchObjectType::Street, "street locality returns street");
+    expect_eq_u32(street.ranked_candidates.front().ref.index, 1, "street locality top street uses street regions");
+    expect_eq_i32(street.ranked_candidates.front().shared_admin_level, 8, "street locality level 8 match");
+
+    const auto region = osm::search::runGeocodeQuery(data, index, "Baden Wuerttemberg");
+    expect_true(!region.ranked_candidates.empty(), "region name has candidates");
+    expect_true(region.ranked_candidates.front().ref.type == osm::SearchObjectType::Region, "region name returns region candidate");
+    expect_eq_u32(region.ranked_candidates.front().ref.index, 0, "region name top region");
+    expect_true(region.ranked_candidates.front().exact_name_match, "region name exact match is recorded");
 
     if (failures != 0) {
         std::cerr << failures << " geocode query test(s) failed\n";

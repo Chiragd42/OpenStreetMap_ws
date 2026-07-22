@@ -1,4 +1,3 @@
-<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -11,46 +10,194 @@
     crossorigin=""
   />
   <style>
-    html, body { margin: 0; padding: 0; height: 100%; font-family: system-ui, sans-serif; }
+    html, body { margin: 0; padding: 0; height: 100%; font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #172033; }
     #map { width: 100%; height: 100%; }
+    .panel-dock {
+      position: absolute;
+      inset: 0;
+      z-index: 1000;
+      pointer-events: none;
+    }
     .panel {
       position: absolute;
-      top: 10px;
-      right: 10px;
-      z-index: 1000;
-      background: rgba(255, 255, 255, 0.95);
-      border-radius: 8px;
-      padding: 10px 12px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-      width: min(360px, calc(100vw - 44px));
+      background: rgba(255, 255, 255, 0.94);
+      border: 1px solid rgba(255, 255, 255, 0.78);
+      border-radius: 12px;
+      padding: 8px;
+      box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16), 0 2px 6px rgba(15, 23, 42, 0.08);
+      backdrop-filter: blur(12px);
       max-height: calc(100vh - 44px);
       overflow: auto;
-      font-size: 14px;
+      font-size: 13px;
+      pointer-events: auto;
     }
-    .panel h3 { margin: 0 0 8px 0; font-size: 14px; }
-    .panel .row { margin-bottom: 6px; }
+    .tools-panel {
+      position: fixed;
+      top: 92px;
+      bottom: auto;
+      left: 18px;
+      z-index: 1200;
+      width: min(265px, calc(100vw - 40px));
+      padding: 12px;
+      border-radius: 20px;
+      border: 1px solid rgba(148, 163, 184, 0.42);
+      background: rgba(255, 255, 255, 0.88);
+      box-shadow: 0 24px 60px rgba(15, 23, 42, 0.30), 0 8px 20px rgba(15, 23, 42, 0.16);
+      backdrop-filter: blur(18px) saturate(1.25);
+      -webkit-backdrop-filter: blur(18px) saturate(1.25);
+    }
+    .search-panel {
+      top: 10px;
+      right: 10px;
+      width: min(350px, calc(100vw - 36px));
+    }
+    .panel h3 { margin: 0; color: #0f172a; font-size: 14.5px; font-weight: 750; letter-spacing: -0.01em; }
+    .tools-panel h3 {
+      cursor: grab;
+      user-select: none;
+      touch-action: none;
+    }
+    .tools-panel.dragging h3 {
+      cursor: grabbing;
+    }
+    .panel .row { margin-bottom: 3px; }
+    .layer-card {
+      margin: 5px 0;
+      padding: 6px;
+      border: 1px solid #dbe3ee;
+      border-radius: 10px;
+      background: rgba(248, 250, 252, 0.88);
+    }
+    .layer-card-title {
+      margin: 0 0 4px;
+      color: #334155;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+    .layer-counts {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-bottom: 5px;
+    }
+    .layer-count {
+      display: inline-flex;
+      align-items: center;
+      min-height: 18px;
+      padding: 1px 6px;
+      border-radius: 999px;
+      background: #e2e8f0;
+      color: #334155;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+    .layer-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 8px;
+    }
+    .layer-controls label {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      color: #334155;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .layer-controls input {
+      appearance: none;
+      width: 15px;
+      height: 15px;
+      margin: 0;
+      border: 1px solid #94a3b8;
+      border-radius: 4px;
+      background: #ffffff;
+      cursor: pointer;
+    }
+    .layer-controls input:checked {
+      border-color: #4f46e5;
+      background: #4f46e5;
+      box-shadow: inset 0 0 0 3px #ffffff;
+    }
+    .layer-controls input:focus-visible {
+      outline: 2px solid #818cf8;
+      outline-offset: 2px;
+    }
     .search-row {
       display: flex;
-      gap: 6px;
-      margin: 8px 0 6px;
+      gap: 5px;
+      margin: 4px 0 0;
+    }
+    .search-support {
+      margin: 3px 0 0;
+      color: #475569;
+      font-size: 11px;
+      line-height: 1.3;
+    }
+    .search-examples {
+      margin: 2px 0 0;
+      color: #64748b;
+      font-size: 10px;
+      line-height: 1.3;
+    }
+    .search-examples code {
+      color: #334155;
+      font-size: inherit;
+    }
+    .search-card {
+      margin: 5px 0 0;
+      padding: 6px;
+      border: 1px solid #dbe3ee;
+      border-radius: 10px;
+      background: linear-gradient(145deg, #f8fafc, #f1f5f9);
+    }
+    .search-label {
+      display: block;
+      color: #334155;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
     }
     .search-input {
       min-width: 0;
       flex: 1;
       border: 1px solid #cbd5e1;
-      border-radius: 6px;
+      border-radius: 8px;
       padding: 6px 8px;
-      font-size: 13px;
+      color: #0f172a;
+      font-size: 12px;
+      transition: border-color 160ms ease, box-shadow 160ms ease;
     }
-    .muted { color: #555; font-size: 12px; }
-    .warn { color: #b45309; font-size: 12px; margin-top: 6px; }
+    .search-input:focus {
+      outline: none;
+      border-color: #2563eb;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+    }
+    .btn-primary {
+      border-color: #2563eb;
+      background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      color: #ffffff;
+      font-weight: 700;
+      box-shadow: 0 2px 4px rgba(37, 99, 235, 0.22);
+    }
+    .btn-primary:hover,
+    .btn-primary:focus-visible {
+      border-color: #1d4ed8;
+      background: #1d4ed8;
+    }
+    .muted { color: #555; font-size: 11px; }
+    .warn { color: #b45309; font-size: 11px; margin-top: 4px; }
     .btn {
       border: 1px solid #cbd5e1;
       background: #f8fafc;
       color: #0f172a;
       border-radius: 6px;
-      padding: 4px 8px;
-      font-size: 12px;
+      padding: 3px 7px;
+      font-size: 11px;
       cursor: pointer;
     }
     .btn.active {
@@ -58,30 +205,65 @@
       border-color: #6d28d9;
       color: #ffffff;
     }
+    .reverse-toggle {
+      display: flex;
+      width: 100%;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      margin: 4px 0 0;
+      border-color: #d1d5db;
+      background: #f8fafc;
+      color: #334155;
+      text-align: left;
+    }
+    .reverse-toggle.active {
+      background: #f5f3ff;
+      border-color: #8b5cf6;
+      color: #4c1d95;
+    }
+    .reverse-toggle-label {
+      font-weight: 700;
+    }
+    .reverse-toggle-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .reverse-status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: #94a3b8;
+    }
+    .reverse-toggle.active .reverse-status-dot {
+      background: #7c3aed;
+      box-shadow: 0 0 0 3px #ddd6fe;
+    }
     .reverse-box {
-      margin-top: 8px;
-      padding: 8px;
+      margin-top: 6px;
+      padding: 6px;
       border-radius: 6px;
       border: 1px solid #c4b5fd;
       background: #f5f3ff;
-      font-size: 12px;
+      font-size: 11px;
       line-height: 1.35;
     }
     .reverse-box-title {
       font-weight: 700;
       color: #4c1d95;
-      margin-bottom: 4px;
-    }
-    .geocode-status {
-      min-height: 16px;
-      color: #475569;
-      font-size: 12px;
-      margin-bottom: 6px;
+      margin-bottom: 3px;
     }
     .geocode-results {
       display: grid;
-      gap: 6px;
-      margin-bottom: 8px;
+      gap: 5px;
+      margin-top: 6px;
+      max-height: min(42vh, 350px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding-right: 2px;
     }
     .geocode-result {
       display: block;
@@ -89,27 +271,30 @@
       text-align: left;
       border: 1px solid #d1d5db;
       background: #ffffff;
-      border-radius: 6px;
-      padding: 7px 8px;
-      cursor: pointer;
+      border-radius: 8px;
+      padding: 6px 8px;
       color: #0f172a;
+      font-size: 12px;
+      cursor: pointer;
+      transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
     }
     .geocode-result:hover,
     .geocode-result:focus {
       outline: none;
       border-color: #2563eb;
       box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.16);
+      transform: translateY(-1px);
     }
     .geocode-title {
       font-weight: 700;
-      font-size: 13px;
+      font-size: 12px;
       line-height: 1.25;
       overflow-wrap: anywhere;
     }
     .geocode-detail,
     .geocode-reason {
       color: #475569;
-      font-size: 12px;
+      font-size: 11px;
       line-height: 1.3;
       margin-top: 2px;
       overflow-wrap: anywhere;
@@ -117,24 +302,46 @@
     .geocode-reason {
       color: #166534;
     }
-    .search-help {
-      margin: 0 0 6px;
+    .geocode-status {
       color: #475569;
-      font-size: 12px;
-      line-height: 1.35;
+      font-size: 11px;
+      margin: 6px 1px 0;
+    }
+    .geocode-status:empty { display: none; }
+    .search-pin {
+      display: block;
+      position: relative;
+      width: 22px;
+      height: 22px;
+      border: 2px solid #ffffff;
+      border-radius: 50% 50% 50% 0;
+      box-sizing: border-box;
+      box-shadow: 0 3px 8px rgba(15, 23, 42, 0.32);
+      transform: rotate(-45deg);
+    }
+    .search-pin::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.92);
+      transform: translate(-50%, -50%);
     }
     .badge-row {
       display: flex;
       flex-wrap: wrap;
-      gap: 4px;
-      margin-top: 4px;
+      gap: 3px;
+      margin-top: 5px;
     }
     .badge {
       display: inline-flex;
       align-items: center;
       border-radius: 999px;
-      padding: 2px 6px;
-      font-size: 11px;
+      padding: 1px 5px;
+      font-size: 10px;
       font-weight: 700;
       background: #e2e8f0;
       color: #334155;
@@ -145,37 +352,78 @@
     .badge.fuzzy { background: #fef3c7; color: #92400e; }
     .badge.partial { background: #ede9fe; color: #6d28d9; }
     .badge.original { background: #e0f2fe; color: #0369a1; }
+    .panel-footer {
+      border-top: 1px solid #e2e8f0;
+      margin-top: 5px;
+      padding-top: 4px;
+    }
+    .geocode-results:empty { display: none; }
+    .panel-footer .muted + .muted { margin-top: 1px; }
+    @media (max-width: 740px) {
+      .panel {
+        max-height: calc(50vh - 27px);
+      }
+      .search-panel { top: 10px; right: 10px; }
+      .tools-panel {
+        position: fixed;
+        top: auto;
+        right: auto;
+        bottom: 14px;
+        left: 14px;
+        width: min(265px, calc(100vw - 28px));
+        max-height: calc(50vh - 28px);
+      }
+      .geocode-results { max-height: 25vh; }
+    }
   </style>
 </head>
 <body>
   <div id="map"></div>
-  <div class="panel">
-    <h3>OSM Search &amp; Reverse Geocoder</h3>
-    <div class="row"><strong id="houseCount">Houses: 0</strong></div>
-    <div class="row"><strong id="streetCount">Streets: 0</strong></div>
-    <div class="row"><strong id="regionCount">Regions: 0</strong></div>
-    <div class="row">
-      <label><input type="checkbox" id="showHouses" checked /> Houses</label>
-      <label><input type="checkbox" id="showStreets" /> Streets</label>
-      <label><input type="checkbox" id="showRegions" checked /> Regions</label>
-    </div>
-    <div class="row">
-      <button id="reverseToggleBtn" class="btn" type="button">Reverse Mode: OFF</button>
-    </div>
-    <div class="search-row">
-      <input id="geocodeInput" class="search-input" type="search" placeholder="Search address or place..." autocomplete="off" />
-      <button id="geocodeButton" class="btn" type="button">Search</button>
-    </div>
-    <div class="search-help">Supports exact, typo-tolerant, and partial search. Try: <code>Aalen Bahn 10</code>, <code>Stutgart Burgar King</code>, <code>Stuttgart Burger Ki</code>.</div>
-    <div id="geocodeStatus" class="geocode-status"></div>
-    <div id="geocodeResults" class="geocode-results"></div>
-    <div id="reverseResultBox" class="reverse-box" style="display:none;">
-      <div class="reverse-box-title">Reverse Geocoder</div>
-      <div id="reverseResultText">Click on the map to find nearest address.</div>
-    </div>
-    <div class="muted">Backend: <code>http://127.0.0.1:8080</code></div>
-    <div class="muted">Move/zoom map to trigger bbox queries. Enable Reverse Mode to click for reverse geocoding.</div>
-    <div class="warn" id="tileStatus" style="display:none;">Map tiles are partially blocked on this network/browser. Try disabling strict privacy/ad-block for this page.</div>
+  <div class="panel-dock">
+    <aside class="panel tools-panel" aria-label="Map tools">
+      <h3 id="toolsPanelHandle">Map Tools</h3>
+      <section class="layer-card" aria-label="Map layers">
+        <div class="layer-card-title">Map layers</div>
+        <div class="layer-counts" aria-live="polite">
+          <span id="houseCount" class="layer-count">Houses: 0</span>
+          <span id="streetCount" class="layer-count">Streets: 0</span>
+          <span id="regionCount" class="layer-count">Regions: 0</span>
+        </div>
+        <div class="layer-controls">
+          <label><input type="checkbox" id="showHouses" checked /> Houses</label>
+          <label><input type="checkbox" id="showStreets" /> Streets</label>
+          <label><input type="checkbox" id="showRegions" checked /> Regions</label>
+        </div>
+      </section>
+      <div class="row">
+        <button id="reverseToggleBtn" class="btn reverse-toggle" type="button" aria-pressed="false">
+          <span class="reverse-toggle-label">Reverse geocoding</span>
+          <span class="reverse-toggle-status"><span class="reverse-status-dot" aria-hidden="true"></span><span id="reverseModeStatus">OFF</span></span>
+        </button>
+      </div>
+      <div id="reverseResultBox" class="reverse-box" style="display:none;">
+        <div class="reverse-box-title">Reverse Geocoder</div>
+        <div id="reverseResultText">Click on the map to find nearest address.</div>
+      </div>
+      <div class="panel-footer">
+        <div class="muted">Move or zoom to update map layers.</div>
+        <div class="muted">Backend: <code>http://127.0.0.1:8080</code></div>
+        <div class="warn" id="tileStatus" style="display:none;">Map tiles are partially blocked on this network/browser. Try disabling strict privacy/ad-block for this page.</div>
+      </div>
+    </aside>
+    <section class="panel search-panel" aria-label="Place search panel">
+      <h3>OSM Search</h3>
+      <section class="search-card" aria-label="Place search">
+        <label class="search-label" for="geocodeInput">Search places</label>
+        <div class="search-row">
+          <input id="geocodeInput" class="search-input" type="search" placeholder="Search address or place..." autocomplete="off" />
+          <button id="geocodeButton" class="btn btn-primary" type="button">Search</button>
+        </div>
+        <p class="search-support">Supports exact, typo-tolerant, and partial search.</p>
+      </section>
+      <div id="geocodeStatus" class="geocode-status"></div>
+      <div id="geocodeResults" class="geocode-results"></div>
+    </section>
   </div>
 
   <script
@@ -222,7 +470,10 @@
     const showHousesEl = document.getElementById("showHouses");
     const showStreetsEl = document.getElementById("showStreets");
     const showRegionsEl = document.getElementById("showRegions");
+    const toolsPanelEl = document.querySelector(".tools-panel");
+    const toolsPanelHandleEl = document.getElementById("toolsPanelHandle");
     const reverseToggleBtnEl = document.getElementById("reverseToggleBtn");
+    const reverseModeStatusEl = document.getElementById("reverseModeStatus");
     const geocodeInputEl = document.getElementById("geocodeInput");
     const geocodeButtonEl = document.getElementById("geocodeButton");
     const geocodeStatusEl = document.getElementById("geocodeStatus");
@@ -265,6 +516,87 @@
       if (type === "poi") return "#dc2626";
       if (type === "locality") return "#16a34a";
       return "#475569";
+    }
+
+    function clearGeocodeSearch() {
+      geocodeLayer.clearLayers();
+      geocodeResultsEl.innerHTML = "";
+      geocodeStatusEl.textContent = "";
+    }
+
+    function clampPanelPosition(left, top, panel) {
+      const margin = 8;
+      const maxLeft = Math.max(margin, window.innerWidth - panel.offsetWidth - margin);
+      const maxTop = Math.max(margin, window.innerHeight - panel.offsetHeight - margin);
+      return {
+        left: Math.min(Math.max(left, margin), maxLeft),
+        top: Math.min(Math.max(top, margin), maxTop),
+      };
+    }
+
+    function setPanelPosition(panel, left, top) {
+      const clamped = clampPanelPosition(left, top, panel);
+      panel.style.left = `${clamped.left}px`;
+      panel.style.top = `${clamped.top}px`;
+      panel.style.right = "auto";
+      panel.style.bottom = "auto";
+    }
+
+    function initDraggableToolsPanel() {
+      if (!toolsPanelEl || !toolsPanelHandleEl) return;
+
+      let dragStart = null;
+
+      toolsPanelHandleEl.addEventListener("pointerdown", (event) => {
+        if (event.button !== undefined && event.button !== 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+
+        const rect = toolsPanelEl.getBoundingClientRect();
+        dragStart = {
+          pointerId: event.pointerId,
+          pointerX: event.clientX,
+          pointerY: event.clientY,
+          panelLeft: rect.left,
+          panelTop: rect.top,
+        };
+        toolsPanelEl.classList.add("dragging");
+        toolsPanelHandleEl.setPointerCapture(event.pointerId);
+      });
+
+      toolsPanelHandleEl.addEventListener("pointermove", (event) => {
+        if (!dragStart || event.pointerId !== dragStart.pointerId) return;
+        event.preventDefault();
+        const nextLeft = dragStart.panelLeft + event.clientX - dragStart.pointerX;
+        const nextTop = dragStart.panelTop + event.clientY - dragStart.pointerY;
+        setPanelPosition(toolsPanelEl, nextLeft, nextTop);
+      });
+
+      const stopDragging = (event) => {
+        if (!dragStart || event.pointerId !== dragStart.pointerId) return;
+        dragStart = null;
+        toolsPanelEl.classList.remove("dragging");
+        if (toolsPanelHandleEl.hasPointerCapture(event.pointerId)) {
+          toolsPanelHandleEl.releasePointerCapture(event.pointerId);
+        }
+      };
+
+      toolsPanelHandleEl.addEventListener("pointerup", stopDragging);
+      toolsPanelHandleEl.addEventListener("pointercancel", stopDragging);
+      window.addEventListener("resize", () => {
+        const rect = toolsPanelEl.getBoundingClientRect();
+        setPanelPosition(toolsPanelEl, rect.left, rect.top);
+      });
+    }
+
+    function searchMarkerIcon(type) {
+      return L.divIcon({
+        className: "",
+        html: `<span class="search-pin" style="background:${escapeHtml(resultColor(type))}"></span>`,
+        iconSize: [22, 22],
+        iconAnchor: [11, 22],
+        popupAnchor: [0, -22],
+      });
     }
 
     function matchStrategyLabel(strategy) {
@@ -325,13 +657,10 @@
       const bounds = [];
       for (const result of results.slice(0, 50)) {
         if (!Number.isFinite(result.lat) || !Number.isFinite(result.lon)) continue;
-        const color = resultColor(result.type);
-        const marker = L.circleMarker([result.lat, result.lon], {
-          radius: result.type === "house" ? 7 : 6,
-          color,
-          fillColor: color,
-          fillOpacity: 0.85,
-          weight: 2,
+        const marker = L.marker([result.lat, result.lon], {
+          icon: searchMarkerIcon(result.type),
+          title: result.name || "Search result",
+          riseOnHover: true,
         });
         marker.bindPopup(`
           <strong>${escapeHtml(result.name || "(unnamed)")}</strong><br/>
@@ -352,10 +681,8 @@
 
     async function runGeocodeSearch() {
       const query = geocodeInputEl.value.trim();
-      geocodeLayer.clearLayers();
-      geocodeResultsEl.innerHTML = "";
+      clearGeocodeSearch();
       if (!query) {
-        geocodeStatusEl.textContent = "";
         return;
       }
 
@@ -379,12 +706,16 @@
 
     function setReverseMode(enabled) {
       reverseModeEnabled = enabled;
-      reverseToggleBtnEl.textContent = `Reverse Mode: ${enabled ? "ON" : "OFF"}`;
+      reverseModeStatusEl.textContent = enabled ? "ON" : "OFF";
       reverseToggleBtnEl.classList.toggle("active", enabled);
+      reverseToggleBtnEl.setAttribute("aria-pressed", String(enabled));
+      reverseToggleBtnEl.setAttribute("aria-label", `Reverse geocoding: ${enabled ? "on" : "off"}`);
       map.getContainer().style.cursor = enabled ? "crosshair" : "";
       reverseResultBoxEl.style.display = enabled ? "block" : "none";
       if (enabled) {
         reverseResultTextEl.textContent = "Click on the map to find nearest address.";
+      } else {
+        reverseLayer.clearLayers();
       }
     }
 
@@ -394,20 +725,14 @@
         const url = `${backendBase}/reverse?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`;
         const result = await fetchJson(url);
         const nearest = result.nearest;
+        const clickedRegions = Array.isArray(result.clicked_containing_regions) ? result.clicked_containing_regions : [];
+        const nearestPoi = result.nearest_poi && typeof result.nearest_poi === "object" ? result.nearest_poi : null;
         if (!nearest) {
           reverseResultTextEl.textContent = "No nearby address found.";
           return;
         }
 
         reverseLayer.clearLayers();
-        const clicked = L.circleMarker([lat, lon], {
-          radius: 5,
-          color: "#111827",
-          fillColor: "#111827",
-          fillOpacity: 0.9,
-          weight: 1,
-        }).addTo(reverseLayer);
-
         const found = L.circleMarker([nearest.lat, nearest.lon], {
           radius: 6,
           color: "#7c3aed",
@@ -423,19 +748,54 @@
           dashArray: "4,4",
         }).addTo(reverseLayer);
 
-        const addr = `${nearest.street || ""} ${nearest.house_number || ""}, ${nearest.postcode || ""} ${nearest.city || ""}, ${nearest.state || ""}, ${nearest.country || ""}`.replace(/\s+,/g, ",").trim();
-        const popup = `<strong>Reverse Result</strong><br/>Distance: ${Number(nearest.distance_m || 0).toFixed(1)} m<br/>${addr}`;
+        const isStreetResult = nearest.type === "street";
+        const isRegionResult = nearest.type === "region";
+        const streetFallbackLabel = `${nearest.name || "Street"}${nearest.highway ? ` (${nearest.highway})` : ""}`;
+        const regionFallbackLabel = `${nearest.name || "Region"}${nearest.admin_level != null ? ` (admin ${nearest.admin_level})` : ""}`;
+        const addr = isRegionResult
+          ? regionFallbackLabel
+          : isStreetResult
+          ? streetFallbackLabel
+          : `${nearest.street || ""} ${nearest.house_number || ""}, ${nearest.postcode || ""} ${nearest.city || ""}, ${nearest.state || ""}, ${nearest.country || ""}`.replace(/\s+,/g, ",").trim();
+        const clickedRegionPath = clickedRegions
+          .map((region) => region && region.name ? escapeHtml(region.name) : "")
+          .filter(Boolean)
+          .join(" → ");
+        const nearestPoiLabel = nearestPoi
+          ? `${nearestPoi.name || "POI"}${nearestPoi.category ? ` (${nearestPoi.category})` : ""} · ${Number(nearestPoi.distance_m || 0).toFixed(1)} m`
+          : "-";
+        const nearestStreet = result.nearest_street && typeof result.nearest_street === "object" ? result.nearest_street : null;
+        const nearestStreetLabel = nearestStreet
+          ? `${nearestStreet.name || "Street"}${nearestStreet.highway ? ` (${nearestStreet.highway})` : ""} · ${Number(nearestStreet.distance_m || 0).toFixed(1)} m`
+          : "-";
+        const popupPoi = nearestPoi ? `<br/>Nearest POI: ${escapeHtml(nearestPoiLabel)}` : "";
+        const popupStreet = !isStreetResult && nearestStreet ? `<br/>Nearest street: ${escapeHtml(nearestStreetLabel)}` : "";
+        const popup = `<strong>Reverse Result</strong><br/>Distance: ${Number(nearest.distance_m || 0).toFixed(1)} m<br/>${escapeHtml(addr)}${popupPoi}`;
+        const detailRows = isRegionResult ? `
+          <div><strong>Result type:</strong> Region fallback</div>
+          <div><strong>Region:</strong> ${escapeHtml(nearest.name || "-")}</div>
+          <div><strong>Admin level:</strong> ${nearest.admin_level != null ? escapeHtml(nearest.admin_level) : "-"}</div>
+        ` : isStreetResult ? `
+          <div><strong>Result type:</strong> Street fallback</div>
+          <div><strong>Street:</strong> ${escapeHtml(nearest.name || "-")}</div>
+          <div><strong>Highway:</strong> ${escapeHtml(nearest.highway || "-")}</div>
+        ` : `
+          <div><strong>Result type:</strong> House</div>
+          <div><strong>Street:</strong> ${escapeHtml(nearest.street || "-")}</div>
+          <div><strong>House:</strong> ${escapeHtml(nearest.house_number || "-")}</div>
+          <div><strong>Postcode:</strong> ${escapeHtml(nearest.postcode || "-")}</div>
+          <div><strong>City:</strong> ${escapeHtml(nearest.city || "-")}</div>
+          <div><strong>State:</strong> ${escapeHtml(nearest.state || "-")}</div>
+          <div><strong>Country:</strong> ${escapeHtml(nearest.country || "-")}</div>
+          <div><strong>Nearest street:</strong> ${escapeHtml(nearestStreetLabel)}</div>
+        `;
         reverseResultTextEl.innerHTML = `
-          <div><strong>Street:</strong> ${nearest.street || "-"}</div>
-          <div><strong>House:</strong> ${nearest.house_number || "-"}</div>
-          <div><strong>Postcode:</strong> ${nearest.postcode || "-"}</div>
-          <div><strong>City:</strong> ${nearest.city || "-"}</div>
-          <div><strong>State:</strong> ${nearest.state || "-"}</div>
-          <div><strong>Country:</strong> ${nearest.country || "-"}</div>
+          ${detailRows}
+          <div><strong>Inside:</strong> ${clickedRegionPath || "-"}</div>
+          <div><strong>Nearest POI:</strong> ${escapeHtml(nearestPoiLabel)}</div>
           <div><strong>Distance:</strong> ${Number(nearest.distance_m || 0).toFixed(1)} m</div>
         `;
-        clicked.bindPopup("Clicked location");
-        found.bindPopup(popup).openPopup();
+        found.bindPopup(`${popup}${popupStreet}`).openPopup();
       } catch (err) {
         console.error("reverse geocode failed", err);
         reverseResultTextEl.textContent = "Reverse lookup failed.";
@@ -726,12 +1086,18 @@
         runGeocodeSearch();
       }
     });
+    geocodeInputEl.addEventListener("search", () => {
+      if (!geocodeInputEl.value.trim()) {
+        clearGeocodeSearch();
+      }
+    });
 
     map.on("moveend", scheduleRefresh);
     map.on("click", (e) => {
       if (!reverseModeEnabled) return;
       runReverseGeocode(e.latlng.lat, e.latlng.lng);
     });
+    initDraggableToolsPanel();
     setReverseMode(false);
     syncLayerVisibility();
     scheduleRefresh();

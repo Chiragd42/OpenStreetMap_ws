@@ -514,8 +514,17 @@ void append_interpretations_for_tokens(
             ids = &data.locality_containing_region_ids;
             break;
         case SearchObjectType::Street:
+            if (ref.index >= data.streets.size()) return out;
+            begin = data.streets[ref.index].containing_regions_begin;
+            count = data.streets[ref.index].containing_regions_count;
+            ids = &data.street_containing_region_ids;
+            break;
         case SearchObjectType::Region:
-            return out;
+            if (ref.index >= data.regions.size()) return out;
+            begin = data.regions[ref.index].containing_regions_begin;
+            count = data.regions[ref.index].containing_regions_count;
+            ids = &data.region_containing_region_ids;
+            break;
     }
     if (ids == nullptr) return out;
     const auto end = static_cast<std::size_t>(begin) + static_cast<std::size_t>(count);
