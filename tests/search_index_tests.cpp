@@ -77,6 +77,8 @@ int main() {
     expect_eq_size(metrics.indexed_pois, 2, "indexed pois");
     expect_eq_size(metrics.indexed_regions, 1, "indexed regions");
     expect_eq_size(metrics.indexed_addresses, 1, "indexed address");
+    expect_true(metrics.indexed_full_names > 0, "full names are indexed");
+    expect_true(metrics.suffix_count > metrics.indexed_full_names, "suffix array contains full-name suffixes");
 
     expect_eq_size(index.exact_name_index.at("burger king").size(), 2, "exact burger king postings");
     expect_eq_size(index.exact_name_index.at("koenigstrasse").size(), 1, "exact koenigstrasse postings");
@@ -93,6 +95,27 @@ int main() {
     const auto intersection = osm::search::intersectPostingLists({index.token_index.at("king"), index.token_index.at("burger")});
     expect_eq_size(intersection.size(), 2, "token intersection order independent");
     expect_true(intersection[0] < intersection[1], "intersection sorted");
+
+    const auto prefix_matches = osm::search::findSubstringNameMatches(index, "burger ki");
+    expect_true(!prefix_matches.empty(), "multiword prefix substring finds a name");
+    expect_true(index.names[prefix_matches.front().name_id].normalized_name == "burger king", "multiword prefix resolves burger king");
+    expect_true(prefix_matches.front().starts_at_name_begin, "multiword prefix is marked as name prefix");
+
+    const auto interior_matches = osm::search::findSubstringNameMatches(index, "nigstr");
+    expect_true(!interior_matches.empty(), "interior substring finds a name");
+    expect_true(index.names[interior_matches.front().name_id].normalized_name == "koenigstrasse", "interior substring resolves koenigstrasse");
+    expect_true(!interior_matches.front().starts_at_name_begin, "interior substring is not marked as prefix");
+
+    expect_true(osm::search::findSubstringNameMatches(index, "a").empty(), "one-character substring expansion is disabled");
+
+    const auto fuzzy_street = osm::search::findFuzzyTokenMatches(
+        index, "koenigstrase", osm::search::IndexedNameKind::Street, 2);
+    expect_true(!fuzzy_street.empty(), "typed street fuzzy lookup returns candidates");
+    expect_true(fuzzy_street.front().token == "koenigstrasse", "typed street fuzzy lookup corrects street token");
+    const auto fuzzy_poi = osm::search::findFuzzyTokenMatches(
+        index, "burgar", osm::search::IndexedNameKind::Poi, 1);
+    expect_true(!fuzzy_poi.empty(), "typed poi fuzzy lookup returns candidates");
+    expect_true(fuzzy_poi.front().token == "burger", "typed poi fuzzy lookup corrects poi token");
 
     if (failures != 0) {
         std::cerr << failures << " search index test(s) failed\n";

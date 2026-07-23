@@ -854,6 +854,10 @@ int App::run(const AppOptions& options) const {
               << "  region_name_postings: " << search_metrics.region_name_postings << '\n'
               << "  locality_name_keys: " << search_metrics.locality_name_keys << '\n'
               << "  locality_name_postings: " << search_metrics.locality_name_postings << '\n'
+              << "  indexed_full_names: " << search_metrics.indexed_full_names << '\n'
+              << "  suffix_count: " << search_metrics.suffix_count << '\n'
+              << "  estimated_suffix_bytes: " << search_metrics.estimated_suffix_bytes << '\n'
+              << "  fuzzy_vocabulary_tokens: " << search_metrics.fuzzy_vocabulary_tokens << '\n'
               << "  longest_posting_token: " << search_metrics.longest_posting_token << '\n'
               << "  longest_posting_list: " << search_metrics.longest_posting_list << '\n'
               << "  build_seconds: " << search_metrics.build_seconds << '\n';

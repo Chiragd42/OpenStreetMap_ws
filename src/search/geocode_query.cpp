@@ -117,43 +117,6 @@ using CandidateMap = std::map<SearchObjectRef, CandidateAccumulatorEntry>;
     return spans;
 }
 
-[[nodiscard]] std::size_t edit_distance_bounded(std::string_view lhs, std::string_view rhs, const std::size_t max_distance) {
-    if (lhs == rhs) {
-        return 0;
-    }
-    const auto lhs_size = lhs.size();
-    const auto rhs_size = rhs.size();
-    const auto length_delta = lhs_size > rhs_size ? lhs_size - rhs_size : rhs_size - lhs_size;
-    if (length_delta > max_distance) {
-        return max_distance + 1;
-    }
-
-    std::vector<std::size_t> previous(rhs_size + 1);
-    std::vector<std::size_t> current(rhs_size + 1);
-    for (std::size_t j = 0; j <= rhs_size; ++j) {
-        previous[j] = j;
-    }
-
-    for (std::size_t i = 1; i <= lhs_size; ++i) {
-        current[0] = i;
-        std::size_t row_min = current[0];
-        for (std::size_t j = 1; j <= rhs_size; ++j) {
-            const auto substitution_cost = lhs[i - 1] == rhs[j - 1] ? 0U : 1U;
-            current[j] = std::min({
-                previous[j] + 1,
-                current[j - 1] + 1,
-                previous[j - 1] + substitution_cost,
-            });
-            row_min = std::min(row_min, current[j]);
-        }
-        if (row_min > max_distance) {
-            return max_distance + 1;
-        }
-        previous.swap(current);
-    }
-    return previous[rhs_size];
-}
-
 [[nodiscard]] std::size_t max_fuzzy_distance_for_token(std::string_view token) {
     if (token.size() < 3) {
         return 0;
@@ -164,126 +127,104 @@ using CandidateMap = std::map<SearchObjectRef, CandidateAccumulatorEntry>;
     return 2;
 }
 
-[[nodiscard]] std::string best_fuzzy_token_match(const SearchIndex& index, std::string_view token) {
-    const auto max_distance = max_fuzzy_distance_for_token(token);
-    if (max_distance == 0 || has_digit(token)) {
-        return {};
-    }
-    if (index.token_index.find(std::string(token)) != index.token_index.end()) {
-        return {};
-    }
+struct TokenVariant { std::vector<std::string> tokens; std::size_t edit_cost{0}; };
 
-    std::string best_token;
-    std::size_t best_distance = max_distance + 1;
-    std::size_t best_posting_count = 0;
-    auto consider_candidate = [&](const std::string& candidate, const std::size_t posting_count) {
-        if (candidate == token) {
-            best_token.clear();
-            best_distance = 0;
-            best_posting_count = posting_count;
-            return;
+[[nodiscard]] std::vector<TokenVariant> fuzzy_token_variants(const SearchIndex& index, const std::vector<std::string>& tokens) {
+    constexpr std::size_t kBeamWidth = 12;
+    std::vector<TokenVariant> beam{{.tokens = tokens, .edit_cost = 0}};
+    for (std::size_t position = 0; position < tokens.size(); ++position) {
+        const auto& token = tokens[position];
+        const auto max_distance = max_fuzzy_distance_for_token(token);
+        if (max_distance == 0 || has_digit(token) || index.token_index.contains(token)) continue;
+        std::vector<FuzzyTokenMatch> alternatives;
+        for (const auto kind : {IndexedNameKind::Street, IndexedNameKind::Locality, IndexedNameKind::Poi, IndexedNameKind::Region}) {
+            auto typed = findFuzzyTokenMatches(index, token, kind, max_distance, 3);
+            alternatives.insert(alternatives.end(), typed.begin(), typed.end());
         }
-        const auto length_delta = token.size() > candidate.size() ? token.size() - candidate.size() : candidate.size() - token.size();
-        if (length_delta > max_distance) {
-            return;
+        std::sort(alternatives.begin(), alternatives.end(), [](const auto& lhs, const auto& rhs) {
+            if (lhs.distance != rhs.distance) return lhs.distance < rhs.distance;
+            if (lhs.kind != rhs.kind) return static_cast<int>(lhs.kind) < static_cast<int>(rhs.kind);
+            return lhs.token < rhs.token;
+        });
+        alternatives.erase(std::unique(alternatives.begin(), alternatives.end(), [](const auto& lhs, const auto& rhs) {
+            return lhs.token == rhs.token;
+        }), alternatives.end());
+        if (alternatives.size() > 4) alternatives.resize(4);
+        if (alternatives.empty()) continue;
+        std::vector<TokenVariant> next;
+        for (const auto& current : beam) {
+            for (const auto& alternative : alternatives) {
+                auto candidate = current;
+                candidate.tokens[position] = alternative.token;
+                candidate.edit_cost += alternative.distance;
+                next.push_back(std::move(candidate));
+            }
         }
-        const auto distance = edit_distance_bounded(token, candidate, max_distance);
-        if (distance > max_distance) {
-            return;
-        }
-        if (distance < best_distance ||
-            (distance == best_distance && posting_count > best_posting_count) ||
-            (distance == best_distance && posting_count == best_posting_count && (best_token.empty() || candidate < best_token))) {
-            best_token = candidate;
-            best_distance = distance;
-            best_posting_count = posting_count;
-        }
-    };
-
-    for (const auto& [candidate, postings] : index.token_index) {
-        consider_candidate(candidate, postings.size());
-        if (best_distance == 0) {
-            return {};
-        }
+        std::sort(next.begin(), next.end(), [](const auto& lhs, const auto& rhs) {
+            if (lhs.edit_cost != rhs.edit_cost) return lhs.edit_cost < rhs.edit_cost;
+            return lhs.tokens < rhs.tokens;
+        });
+        if (next.size() > kBeamWidth) next.resize(kBeamWidth);
+        beam = std::move(next);
     }
+    beam.erase(std::remove_if(beam.begin(), beam.end(), [&](const auto& variant) { return variant.tokens == tokens; }), beam.end());
+    return beam;
+}
 
-    for (const auto& [address_key, postings] : index.address_index) {
-        const auto separator = address_key.find('|');
-        if (separator == std::string::npos) {
-            continue;
-        }
-        for (const auto& candidate : tokenizeNormalizedText(std::string_view{address_key}.substr(0, separator))) {
-            consider_candidate(candidate, postings.size());
-            if (best_distance == 0) {
-                return {};
+[[nodiscard]] std::vector<std::vector<std::string>> partial_token_variants(
+    const SearchIndex& index,
+    const std::vector<std::string>& tokens) {
+    constexpr std::size_t kMaxPartialVariants = 16;
+    constexpr std::size_t kMatchesPerSpan = 8;
+    std::vector<std::vector<std::string>> variants;
+    std::set<std::vector<std::string>> seen;
+    const auto locality_spans = detect_locality_spans(index, tokens);
+    const auto house_spans = detect_house_spans(tokens);
+
+    for (std::size_t span_length = tokens.size(); span_length > 0 && variants.size() < kMaxPartialVariants; --span_length) {
+        for (std::size_t begin = 0; begin + span_length <= tokens.size() && variants.size() < kMaxPartialVariants; ++begin) {
+            const auto end = begin + span_length;
+            const bool overlaps_recognized_locality = std::any_of(locality_spans.begin(), locality_spans.end(), [&](const auto& span) {
+                return spans_overlap(begin, end, span.begin, span.end);
+            });
+            const bool overlaps_house_number = std::any_of(house_spans.begin(), house_spans.end(), [&](const auto& span) {
+                return spans_overlap(begin, end, span.begin, span.end);
+            });
+            if (overlaps_recognized_locality || overlaps_house_number) continue;
+            bool contains_number = false;
+            for (std::size_t i = begin; i < end; ++i) {
+                contains_number = contains_number || has_digit(tokens[i]);
+            }
+            if (contains_number) continue;
+
+            const auto fragment = join_tokens(tokens, begin, end);
+            if (fragment.size() < 2) continue;
+            const auto matches = findSubstringNameMatches(
+                index,
+                fragment,
+                kMatchesPerSpan,
+                house_spans.empty() ? std::nullopt : std::optional{IndexedNameKind::Street});
+            for (const auto& match : matches) {
+                if (match.name_id >= index.names.size()) continue;
+                const auto& full_name = index.names[match.name_id].normalized_name;
+                if (full_name == fragment) continue;
+                if (has_digit(full_name)) continue;
+                const auto replacement = tokenizeNormalizedText(full_name);
+                if (replacement.empty()) continue;
+
+                std::vector<std::string> variant;
+                variant.reserve(tokens.size() - span_length + replacement.size());
+                variant.insert(variant.end(), tokens.begin(), tokens.begin() + static_cast<std::ptrdiff_t>(begin));
+                variant.insert(variant.end(), replacement.begin(), replacement.end());
+                variant.insert(variant.end(), tokens.begin() + static_cast<std::ptrdiff_t>(end), tokens.end());
+                if (variant != tokens && seen.insert(variant).second) {
+                    variants.push_back(std::move(variant));
+                    if (variants.size() >= kMaxPartialVariants) break;
+                }
             }
         }
     }
-    return best_token;
-}
-
-[[nodiscard]] bool is_partial_search_token(std::string_view token) {
-    return token.size() >= 2 && !has_digit(token);
-}
-
-[[nodiscard]] std::string best_partial_token_match(const SearchIndex& index, std::string_view token) {
-    if (!is_partial_search_token(token)) {
-        return {};
-    }
-    if (index.token_index.find(std::string(token)) != index.token_index.end()) {
-        return {};
-    }
-
-    std::string best_token;
-    std::size_t best_posting_count = 0;
-    auto consider_candidate = [&](const std::string& candidate, const std::size_t posting_count) {
-        if (candidate.size() <= token.size() || candidate.compare(0, token.size(), token) != 0) {
-            return;
-        }
-        if (posting_count > best_posting_count ||
-            (posting_count == best_posting_count && (best_token.empty() || candidate.size() < best_token.size())) ||
-            (posting_count == best_posting_count && candidate.size() == best_token.size() && candidate < best_token)) {
-            best_token = candidate;
-            best_posting_count = posting_count;
-        }
-    };
-
-    for (const auto& [candidate, postings] : index.token_index) {
-        consider_candidate(candidate, postings.size());
-    }
-
-    for (const auto& [address_key, postings] : index.address_index) {
-        const auto separator = address_key.find('|');
-        if (separator == std::string::npos) {
-            continue;
-        }
-        for (const auto& candidate : tokenizeNormalizedText(std::string_view{address_key}.substr(0, separator))) {
-            consider_candidate(candidate, postings.size());
-        }
-    }
-    return best_token;
-}
-
-[[nodiscard]] std::vector<std::string> fuzzy_correct_tokens(const SearchIndex& index, const std::vector<std::string>& tokens) {
-    std::vector<std::string> corrected = tokens;
-    for (auto& token : corrected) {
-        const auto replacement = best_fuzzy_token_match(index, token);
-        if (!replacement.empty()) {
-            token = replacement;
-        }
-    }
-    return corrected;
-}
-
-[[nodiscard]] std::vector<std::string> partial_complete_tokens(const SearchIndex& index, const std::vector<std::string>& tokens) {
-    std::vector<std::string> completed = tokens;
-    for (auto& token : completed) {
-        const auto replacement = best_partial_token_match(index, token);
-        if (!replacement.empty()) {
-            token = replacement;
-        }
-    }
-    return completed;
+    return variants;
 }
 
 [[nodiscard]] std::string house_number_from_span(const std::vector<std::string>& tokens, const TokenSpan& span) {
@@ -472,7 +413,8 @@ void append_interpretations_for_tokens(
     const SearchIndex& index,
     const std::vector<std::string>& tokens,
     const QueryMatchStrategy strategy,
-    std::vector<QueryInterpretation>& interpretations) {
+    std::vector<QueryInterpretation>& interpretations,
+    const std::size_t edit_cost = 0) {
     const auto normalized_query = normalized_query_from_tokens(tokens);
     const auto house_spans = detect_house_spans(tokens);
     const auto locality_spans = detect_locality_spans(index, tokens);
@@ -480,9 +422,11 @@ void append_interpretations_for_tokens(
     auto named_interpretations = generate_named_interpretations(index, normalized_query, tokens, locality_spans);
     for (auto& interpretation : address_interpretations) {
         interpretation.match_strategy = strategy;
+        interpretation.edit_cost = edit_cost;
     }
     for (auto& interpretation : named_interpretations) {
         interpretation.match_strategy = strategy;
+        interpretation.edit_cost = edit_cost;
     }
     interpretations.reserve(interpretations.size() + address_interpretations.size() + named_interpretations.size());
     interpretations.insert(interpretations.end(), std::make_move_iterator(address_interpretations.begin()), std::make_move_iterator(address_interpretations.end()));
@@ -709,6 +653,8 @@ void retrieve_address_candidates(const DataStore& data, const SearchIndex& index
         candidate.interpretation_index = interpretation_index;
         candidate.match_strategy = interpretation.match_strategy;
         candidate.exact_address_match = true;
+        candidate.edit_cost = interpretation.edit_cost;
+        candidate.source_name_postings = interpretation.raw_candidate_count;
         enrich_candidate_with_locality(data, interpretation, candidate);
         improve_candidate(candidates, candidate, regionSpecificity(candidate.shared_admin_level));
     }
@@ -742,6 +688,8 @@ void retrieve_named_candidates(const DataStore& data, const SearchIndex& index, 
         candidate.interpretation_index = interpretation_index;
         candidate.match_strategy = interpretation.match_strategy;
         candidate.exact_name_match = exact;
+        candidate.edit_cost = interpretation.edit_cost;
+        candidate.source_name_postings = interpretation.raw_candidate_count;
         enrich_candidate_with_locality(data, interpretation, candidate);
         improve_candidate(candidates, candidate, regionSpecificity(candidate.shared_admin_level));
     }
@@ -751,10 +699,12 @@ void retrieve_named_candidates(const DataStore& data, const SearchIndex& index, 
     const auto lhs_spec = regionSpecificity(lhs.shared_admin_level);
     const auto rhs_spec = regionSpecificity(rhs.shared_admin_level);
     if (lhs.exact_address_match != rhs.exact_address_match) return lhs.exact_address_match > rhs.exact_address_match;
-    if (lhs.exact_name_match != rhs.exact_name_match) return lhs.exact_name_match > rhs.exact_name_match;
     if (lhs.locality_recognized != rhs.locality_recognized) return lhs.locality_recognized > rhs.locality_recognized;
     if (lhs_spec != rhs_spec) return lhs_spec > rhs_spec;
     if (lhs.unexplained_token_count != rhs.unexplained_token_count) return lhs.unexplained_token_count < rhs.unexplained_token_count;
+    if (lhs.source_name_postings != rhs.source_name_postings) return lhs.source_name_postings > rhs.source_name_postings;
+    if (lhs.edit_cost != rhs.edit_cost) return lhs.edit_cost < rhs.edit_cost;
+    if (lhs.exact_name_match != rhs.exact_name_match) return lhs.exact_name_match > rhs.exact_name_match;
     if (lhs.distance_to_locality_m != rhs.distance_to_locality_m) return lhs.distance_to_locality_m < rhs.distance_to_locality_m;
     return lhs.ref < rhs.ref;
 }
@@ -805,12 +755,11 @@ GeocodeQueryResult runGeocodeQuery(
 
     const auto interp_start = std::chrono::steady_clock::now();
     append_interpretations_for_tokens(index, tokens, QueryMatchStrategy::Original, result.interpretations);
-    const auto fuzzy_tokens = fuzzy_correct_tokens(index, tokens);
-    if (fuzzy_tokens != tokens) {
-        append_interpretations_for_tokens(index, fuzzy_tokens, QueryMatchStrategy::Fuzzy, result.interpretations);
+    const auto fuzzy_variants = fuzzy_token_variants(index, tokens);
+    for (const auto& variant : fuzzy_variants) {
+        append_interpretations_for_tokens(index, variant.tokens, QueryMatchStrategy::Fuzzy, result.interpretations, variant.edit_cost);
     }
-    const auto partial_tokens = partial_complete_tokens(index, tokens);
-    if (partial_tokens != tokens && partial_tokens != fuzzy_tokens) {
+    for (const auto& partial_tokens : partial_token_variants(index, tokens)) {
         append_interpretations_for_tokens(index, partial_tokens, QueryMatchStrategy::Partial, result.interpretations);
     }
     std::stable_sort(result.interpretations.begin(), result.interpretations.end(), [](const auto& lhs, const auto& rhs) {

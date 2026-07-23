@@ -57,3 +57,21 @@ The typo and unsupported nearest-category queries are slow because the current f
 - two park POIs and a geographically closer non-park POI.
 
 The synthetic fixture allows the nearest-category behavior to be implemented and tested without hard-coding Kiel or requiring a Germany PBF in CI.
+
+## Phase 2 suffix-array scale check
+
+The first real-cache run after adding the compact full-name suffix array reported:
+
+```text
+indexed_full_names: 171708
+suffix_count: 2536434
+estimated_suffix_bytes: 20291472
+build_seconds: 2.80983
+maximum resident set size: 867205120 bytes
+```
+
+Suffix references begin only at non-whitespace positions. The measured array itself is about 20.3 MB; full startup memory includes the complete cached OSM datastore and all pre-existing indexes.
+
+## Phase 3 fuzzy-index check
+
+The typed BK-trees contain 135,570 vocabulary entries across street, locality, region, and POI-name classes. Representative real-cache query times fell to approximately 5.4 ms for `Aalen Bahnofstrasse 10` and 7.1 ms for `Stutgart Burgar King`, instead of scanning the full vocabulary for hundreds of milliseconds.

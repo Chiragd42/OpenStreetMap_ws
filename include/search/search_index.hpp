@@ -4,12 +4,53 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <array>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <unordered_map>
 #include <vector>
 
 namespace osm::search {
+
+enum class IndexedNameKind : std::uint8_t {
+    Street,
+    Locality,
+    Region,
+    Poi
+};
+
+struct IndexedName {
+    std::string normalized_name;
+    IndexedNameKind kind{IndexedNameKind::Street};
+    std::vector<SearchObjectRef> objects;
+};
+
+struct SuffixRef {
+    std::uint32_t name_id{0};
+    std::uint32_t offset{0};
+};
+
+struct SubstringNameMatch {
+    std::uint32_t name_id{0};
+    bool starts_at_name_begin{false};
+};
+
+struct FuzzyTokenMatch {
+    std::string token;
+    IndexedNameKind kind{IndexedNameKind::Street};
+    std::size_t distance{0};
+};
+
+struct BkTreeNode {
+    std::string token;
+    std::unordered_map<std::size_t, std::uint32_t> children;
+};
+
+struct BkTree {
+    std::vector<BkTreeNode> nodes;
+};
 
 struct SearchIndex {
     std::unordered_map<std::string, std::vector<SearchObjectRef>> exact_name_index;
@@ -17,6 +58,9 @@ struct SearchIndex {
     std::unordered_map<std::string, std::vector<std::uint32_t>> region_name_index;
     std::unordered_map<std::string, std::vector<std::uint32_t>> locality_name_index;
     std::unordered_map<std::string, std::vector<SearchObjectRef>> address_index;
+    std::vector<IndexedName> names;
+    std::vector<SuffixRef> suffix_array;
+    std::array<BkTree, 4> fuzzy_trees;
 };
 
 struct SearchIndexMetrics {
@@ -44,6 +88,10 @@ struct SearchIndexMetrics {
     std::size_t region_name_postings{0};
     std::size_t locality_name_keys{0};
     std::size_t locality_name_postings{0};
+    std::size_t indexed_full_names{0};
+    std::size_t suffix_count{0};
+    std::size_t estimated_suffix_bytes{0};
+    std::size_t fuzzy_vocabulary_tokens{0};
     std::string longest_posting_token;
     std::size_t longest_posting_list{0};
     std::vector<std::pair<std::string, std::size_t>> largest_token_postings;
@@ -61,5 +109,16 @@ struct SearchIndexBuildResult {
 [[nodiscard]] std::string makeAddressKey(std::string_view normalized_street, std::string_view normalized_house_number);
 [[nodiscard]] SearchIndexBuildResult buildSearchIndex(const DataStore& data);
 [[nodiscard]] std::vector<SearchObjectRef> intersectPostingLists(const std::vector<std::vector<SearchObjectRef>>& postings);
+[[nodiscard]] std::vector<SubstringNameMatch> findSubstringNameMatches(
+    const SearchIndex& index,
+    std::string_view normalized_fragment,
+    std::size_t limit = 32,
+    std::optional<IndexedNameKind> required_kind = std::nullopt);
+[[nodiscard]] std::vector<FuzzyTokenMatch> findFuzzyTokenMatches(
+    const SearchIndex& index,
+    std::string_view token,
+    IndexedNameKind kind,
+    std::size_t max_distance,
+    std::size_t limit = 4);
 
 } // namespace osm::search
