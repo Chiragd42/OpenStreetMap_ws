@@ -174,6 +174,9 @@ osm::DataStore make_nearest_category_fixture() {
     add_poi(data, "Hiroshimapark", osm::PoiCategory::Park, 54.3210F, 10.1330F, {kiel, schleswig_holstein});
     add_poi(data, "Schrevenpark", osm::PoiCategory::Park, 54.3290F, 10.1190F, {kiel, schleswig_holstein});
     add_poi(data, "Kiel Café", osm::PoiCategory::Cafe, 54.3151F, 10.1321F, {kiel, schleswig_holstein});
+    add_poi(data, "Chain Place", osm::PoiCategory::Cafe, 54.3200F, 10.1300F, {kiel, schleswig_holstein});
+    add_poi(data, "Chain Place", osm::PoiCategory::Cafe, 54.3200F, 10.1302F, {kiel, schleswig_holstein});
+    add_poi(data, "Chain Place", osm::PoiCategory::Cafe, 54.3200F, 10.1304F, {kiel, schleswig_holstein});
     return data;
 }
 
@@ -283,7 +286,7 @@ int main() {
     expect_true(!kiel_anchor.ranked_candidates.empty(), "synthetic kiel reference address has candidates");
     expect_true(kiel_anchor.ranked_candidates.front().ref.type == osm::SearchObjectType::House, "synthetic kiel reference resolves to house");
     expect_eq_u32(kiel_anchor.ranked_candidates.front().ref.index, 0, "synthetic kiel reference resolves to expected house");
-    expect_true(nearest_fixture.pois.size() == 3, "synthetic nearest-category fixture has two parks and a closer non-park");
+    expect_true(nearest_fixture.pois.size() == 6, "synthetic fixture has two parks, closer non-park, and cluster chain");
 
     const auto nearest_park = osm::search::runGeocodeQuery(
         nearest_fixture,
@@ -318,6 +321,39 @@ int main() {
     expect_true(!unresolved_nearest.reference_resolved, "unresolved nearest reference marked unresolved");
     expect_true(unresolved_nearest.ranked_candidates.empty(), "unresolved nearest returns no unrelated fallback");
     expect_true(!unresolved_nearest.failure_reason.empty(), "unresolved nearest has structured failure reason");
+
+    const osm::BBox aalen_viewport{.min_lon = 10.0, .min_lat = 48.7, .max_lon = 10.2, .max_lat = 48.95};
+    const auto viewport_equal = osm::search::runGeocodeQuery(
+        data,
+        index,
+        "Burger King",
+        osm::search::GeocodeQueryOptions{.viewport = aalen_viewport});
+    expect_true(viewport_equal.ranked_candidates.size() >= 2, "viewport equal-relevance query has both results");
+    expect_eq_u32(viewport_equal.ranked_candidates.front().ref.index, 1, "in-view equal-relevance result wins");
+    expect_true(viewport_equal.ranked_candidates.front().in_viewport, "winning equal-relevance result marked in viewport");
+
+    const auto viewport_strong_outside = osm::search::runGeocodeQuery(
+        data,
+        index,
+        "Stuttgart Burger King",
+        osm::search::GeocodeQueryOptions{.viewport = aalen_viewport});
+    expect_eq_u32(viewport_strong_outside.ranked_candidates.front().ref.index, 0, "strong out-of-view locality match remains first");
+    expect_true(!viewport_strong_outside.ranked_candidates.front().in_viewport, "strong outside result is retained and marked outside");
+
+    const auto cluster_chain = osm::search::runGeocodeQuery(nearest_fixture, nearest_fixture_index, "Chain Place");
+    expect_true(cluster_chain.ranked_candidates.size() == 3, "cluster chain has three ranked members");
+    expect_true(cluster_chain.clusters.size() == 1, "single-linkage joins transitive coordinate chain");
+    expect_true(cluster_chain.clusters.front().member_candidate_indices.size() == 3, "cluster retains all chain members");
+    expect_true(cluster_chain.clusters.front().representative_candidate_index == 0, "cluster representative is stable best-ranked member");
+
+    const auto cluster_post_limit = osm::search::runGeocodeQuery(
+        nearest_fixture,
+        nearest_fixture_index,
+        "Chain Place",
+        osm::search::GeocodeQueryOptions{.max_ranked_candidates = 2});
+    expect_true(cluster_post_limit.ranked_candidates.size() == 2, "cluster input is limited before aggregation");
+    expect_true(cluster_post_limit.clusters.size() == 1, "post-limit members remain clustered");
+    expect_true(cluster_post_limit.clusters.front().member_candidate_indices.size() == 2, "cluster contains only final-limit members");
 
     if (failures != 0) {
         std::cerr << failures << " geocode query test(s) failed\n";

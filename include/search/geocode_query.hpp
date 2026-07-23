@@ -60,6 +60,15 @@ struct GeocodeCandidate {
     std::size_t edit_cost{0};
     std::size_t source_name_postings{0};
     double nearest_distance_m{std::numeric_limits<double>::infinity()};
+    bool in_viewport{false};
+    double distance_to_viewport_center_m{std::numeric_limits<double>::infinity()};
+};
+
+struct GeocodeCluster {
+    std::size_t representative_candidate_index{0};
+    std::vector<std::size_t> member_candidate_indices;
+    double lat{0.0};
+    double lon{0.0};
 };
 
 struct GeocodeQueryTimings {
@@ -76,6 +85,9 @@ struct GeocodeQueryResult {
     std::string normalized_query;
     std::vector<QueryInterpretation> interpretations;
     std::vector<GeocodeCandidate> ranked_candidates;
+    std::vector<GeocodeCluster> clusters;
+    std::optional<BBox> viewport;
+    std::optional<BBox> result_bounds;
     bool nearest_category_intent{false};
     std::optional<PoiCategory> nearest_category;
     std::string reference_query;
@@ -91,6 +103,8 @@ struct GeocodeQueryResult {
 
 struct GeocodeQueryOptions {
     std::size_t max_ranked_candidates{200};
+    std::optional<BBox> viewport;
+    double cluster_threshold_m{20.0};
 };
 
 [[nodiscard]] const char* queryIntentName(QueryIntent intent);

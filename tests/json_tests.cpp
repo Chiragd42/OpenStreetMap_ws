@@ -1,6 +1,7 @@
 #include "model.hpp"
 #include "cache/datastore_cache.hpp"
 #include "query/json.hpp"
+#include "search/geocode_query.hpp"
 
 #include <cstdlib>
 #include <fstream>
@@ -265,6 +266,39 @@ void old_cache_version_is_rejected() {
     expect_contains(error, "Unsupported cache version: 5", "old v5 cache is rejected after v6 bump");
 }
 
+void geocode_json_includes_sheet3_metadata() {
+    osm::DataStore data;
+    add_poi(data, {});
+    osm::search::GeocodeQueryResult result;
+    result.input = "closest cafe to test";
+    result.normalized_query = "closest cafe to test";
+    result.nearest_category_intent = true;
+    result.reference_resolved = true;
+    result.reference_label = "Test 1";
+    result.reference_lat = 48.0;
+    result.reference_lon = 9.0;
+    result.spatial_cells_examined = 2;
+    result.spatial_pois_tested = 1;
+    osm::search::GeocodeCandidate candidate;
+    candidate.ref = osm::SearchObjectRef{.type = osm::SearchObjectType::Poi, .index = 0};
+    candidate.in_viewport = true;
+    candidate.distance_to_viewport_center_m = 15.0;
+    candidate.nearest_distance_m = 42.0;
+    result.ranked_candidates.push_back(candidate);
+    result.clusters.push_back(osm::search::GeocodeCluster{
+        .representative_candidate_index = 0,
+        .member_candidate_indices = {0},
+        .lat = 48.0,
+        .lon = 9.0,
+    });
+
+    const auto json = osm::serialize_geocode_json(data, result);
+    expect_contains(json, "\"nearest_category_intent\":true", "nearest intent metadata serialized");
+    expect_contains(json, "\"in_viewport\":true", "viewport evidence serialized");
+    expect_contains(json, "\"nearest_distance_m\":42", "nearest distance serialized");
+    expect_contains(json, "\"clusters\":[{\"representative_index\":0", "clusters serialized");
+}
+
 } // namespace
 
 int main() {
@@ -275,6 +309,7 @@ int main() {
     regions_json_includes_parent_hierarchy();
     reverse_region_json_serializes_fallback_result();
     old_cache_version_is_rejected();
+    geocode_json_includes_sheet3_metadata();
 
     if (failures != 0) {
         return EXIT_FAILURE;

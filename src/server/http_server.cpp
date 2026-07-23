@@ -451,7 +451,16 @@ std::string handle_api_request(
             return serialize_error_json("Missing q query parameter");
         }
 
-        const auto result = search::runGeocodeQuery(data, search_index, *query_param);
+        search::GeocodeQueryOptions options;
+        if (const auto bbox_param = get_query_param(request.query, "bbox"); bbox_param.has_value()) {
+            options.viewport = parse_bbox_csv(*bbox_param);
+            if (!options.viewport.has_value()) {
+                status_code = 400;
+                status_text = "Bad Request";
+                return serialize_error_json("Invalid bbox format. Expected minLon,minLat,maxLon,maxLat");
+            }
+        }
+        const auto result = search::runGeocodeQuery(data, search_index, *query_param, options);
         profile.matched = result.ranked_candidates.size();
         profile.returned = result.ranked_candidates.size();
         status_code = 200;

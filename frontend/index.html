@@ -652,24 +652,38 @@
       }
     }
 
-    function renderGeocodeMarkers(results) {
+    function renderGeocodeMarkers(results, clusters) {
       geocodeLayer.clearLayers();
       const bounds = [];
-      for (const result of results.slice(0, 50)) {
-        if (!Number.isFinite(result.lat) || !Number.isFinite(result.lon)) continue;
-        const marker = L.marker([result.lat, result.lon], {
+      const markerItems = Array.isArray(clusters) && clusters.length > 0
+        ? clusters.slice(0, 50).map((cluster) => ({
+            result: results[cluster.representative_index],
+            lat: Number(cluster.lat),
+            lon: Number(cluster.lon),
+            count: Number(cluster.member_count || 1),
+            members: (cluster.member_indices || []).map((index) => results[index]).filter(Boolean),
+          }))
+        : results.slice(0, 50).map((result) => ({ result, lat: result.lat, lon: result.lon, count: 1, members: [result] }));
+      for (const item of markerItems) {
+        const result = item.result;
+        if (!result) continue;
+        const lat = Number(item.lat);
+        const lon = Number(item.lon);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+        const marker = L.marker([lat, lon], {
           icon: searchMarkerIcon(result.type),
-          title: result.name || "Search result",
+          title: item.count > 1 ? `${item.count} nearby results` : (result.name || "Search result"),
           riseOnHover: true,
         });
         marker.bindPopup(`
-          <strong>${escapeHtml(result.name || "(unnamed)")}</strong><br/>
+          <strong>${escapeHtml(item.count > 1 ? `${item.count} nearby results` : (result.name || "(unnamed)"))}</strong><br/>
+          ${item.count > 1 ? `${item.members.map((member) => escapeHtml(member.name || "(unnamed)")).join("<br/>")}<br/>` : ""}
           ${escapeHtml(matchStrategyLabel(result.match_strategy || "original"))}<br/>
           ${escapeHtml(result.city || result.shared_relation || "")}<br/>
           ${escapeHtml(result.rank_reason || "")}
         `);
         marker.addTo(geocodeLayer);
-        bounds.push([result.lat, result.lon]);
+        bounds.push([lat, lon]);
       }
 
       if (bounds.length === 1) {
@@ -693,10 +707,10 @@
       geocodeStatusEl.textContent = "Searching...";
 
       try {
-        const data = await fetchJson(`${backendBase}/geocode?q=${encodeURIComponent(query)}`, activeGeocodeController.signal);
+        const data = await fetchJson(`${backendBase}/geocode?q=${encodeURIComponent(query)}&bbox=${encodeURIComponent(bboxParam())}`, activeGeocodeController.signal);
         const results = Array.isArray(data.results) ? data.results : [];
         renderGeocodeResults(data);
-        renderGeocodeMarkers(results);
+        renderGeocodeMarkers(results, data.clusters);
       } catch (err) {
         if (err?.name === "AbortError") return;
         console.error("geocode search failed", err);

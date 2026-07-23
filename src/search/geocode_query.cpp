@@ -818,8 +818,99 @@ void retrieve_named_candidates(const DataStore& data, const SearchIndex& index, 
     if (lhs.source_name_postings != rhs.source_name_postings) return lhs.source_name_postings > rhs.source_name_postings;
     if (lhs.edit_cost != rhs.edit_cost) return lhs.edit_cost < rhs.edit_cost;
     if (lhs.exact_name_match != rhs.exact_name_match) return lhs.exact_name_match > rhs.exact_name_match;
+    if (lhs.in_viewport != rhs.in_viewport) return lhs.in_viewport > rhs.in_viewport;
+    if (lhs.distance_to_viewport_center_m != rhs.distance_to_viewport_center_m) {
+        return lhs.distance_to_viewport_center_m < rhs.distance_to_viewport_center_m;
+    }
     if (lhs.distance_to_locality_m != rhs.distance_to_locality_m) return lhs.distance_to_locality_m < rhs.distance_to_locality_m;
     return lhs.ref < rhs.ref;
+}
+
+void apply_viewport_evidence(
+    const DataStore& data,
+    const std::optional<BBox>& viewport,
+    GeocodeCandidate& candidate) {
+    if (!viewport.has_value()) return;
+    double lat = 0.0;
+    double lon = 0.0;
+    if (!object_coordinate(data, candidate.ref, lat, lon)) return;
+    candidate.in_viewport = viewport->contains(lon, lat);
+    const double center_lat = (viewport->min_lat + viewport->max_lat) * 0.5;
+    const double center_lon = (viewport->min_lon + viewport->max_lon) * 0.5;
+    candidate.distance_to_viewport_center_m = haversine_m(center_lat, center_lon, lat, lon);
+}
+
+void build_result_clusters(
+    const DataStore& data,
+    const double threshold_m,
+    GeocodeQueryResult& result) {
+    const auto count = result.ranked_candidates.size();
+    if (count == 0) return;
+
+    std::vector<double> lats(count, 0.0);
+    std::vector<double> lons(count, 0.0);
+    std::vector<bool> has_coordinate(count, false);
+    for (std::size_t i = 0; i < count; ++i) {
+        has_coordinate[i] = object_coordinate(data, result.ranked_candidates[i].ref, lats[i], lons[i]);
+        if (!has_coordinate[i]) continue;
+        if (!result.result_bounds.has_value()) {
+            result.result_bounds = BBox{.min_lon = lons[i], .min_lat = lats[i], .max_lon = lons[i], .max_lat = lats[i]};
+        } else {
+            result.result_bounds->min_lon = std::min(result.result_bounds->min_lon, lons[i]);
+            result.result_bounds->min_lat = std::min(result.result_bounds->min_lat, lats[i]);
+            result.result_bounds->max_lon = std::max(result.result_bounds->max_lon, lons[i]);
+            result.result_bounds->max_lat = std::max(result.result_bounds->max_lat, lats[i]);
+        }
+    }
+
+    std::vector<std::size_t> parent(count);
+    for (std::size_t i = 0; i < count; ++i) parent[i] = i;
+    const auto find_root = [&](std::size_t value, auto&& self) -> std::size_t {
+        if (parent[value] != value) parent[value] = self(parent[value], self);
+        return parent[value];
+    };
+    const auto unite = [&](const std::size_t lhs, const std::size_t rhs) {
+        const auto lhs_root = find_root(lhs, find_root);
+        const auto rhs_root = find_root(rhs, find_root);
+        if (lhs_root == rhs_root) return;
+        parent[std::max(lhs_root, rhs_root)] = std::min(lhs_root, rhs_root);
+    };
+    if (threshold_m >= 0.0) {
+        for (std::size_t i = 0; i < count; ++i) {
+            if (!has_coordinate[i]) continue;
+            for (std::size_t j = i + 1; j < count; ++j) {
+                if (has_coordinate[j] && haversine_m(lats[i], lons[i], lats[j], lons[j]) <= threshold_m) {
+                    unite(i, j);
+                }
+            }
+        }
+    }
+
+    std::map<std::size_t, std::vector<std::size_t>> members_by_root;
+    for (std::size_t i = 0; i < count; ++i) {
+        members_by_root[find_root(i, find_root)].push_back(i);
+    }
+    result.clusters.reserve(members_by_root.size());
+    for (auto& [_, members] : members_by_root) {
+        GeocodeCluster cluster;
+        cluster.representative_candidate_index = members.front();
+        cluster.member_candidate_indices = std::move(members);
+        std::size_t coordinate_count = 0;
+        for (const auto member : cluster.member_candidate_indices) {
+            if (!has_coordinate[member]) continue;
+            cluster.lat += lats[member];
+            cluster.lon += lons[member];
+            ++coordinate_count;
+        }
+        if (coordinate_count > 0) {
+            cluster.lat /= static_cast<double>(coordinate_count);
+            cluster.lon /= static_cast<double>(coordinate_count);
+        }
+        result.clusters.push_back(std::move(cluster));
+    }
+    std::sort(result.clusters.begin(), result.clusters.end(), [](const auto& lhs, const auto& rhs) {
+        return lhs.representative_candidate_index < rhs.representative_candidate_index;
+    });
 }
 
 void run_nearest_category_query(
@@ -829,6 +920,7 @@ void run_nearest_category_query(
     const GeocodeQueryOptions& options,
     GeocodeQueryResult& result) {
     result.nearest_category_intent = true;
+    result.viewport = options.viewport;
     result.nearest_category = intent.category;
     result.reference_query = intent.reference_query;
     QueryInterpretation interpretation;
@@ -941,9 +1033,11 @@ void run_nearest_category_query(
         candidate.ref = SearchObjectRef{.type = SearchObjectType::Poi, .index = match.poi_index};
         candidate.interpretation_index = 0;
         candidate.nearest_distance_m = match.distance_m;
+        apply_viewport_evidence(data, options.viewport, candidate);
         result.ranked_candidates.push_back(candidate);
     }
     if (result.ranked_candidates.empty()) result.failure_reason = "category_has_no_pois";
+    build_result_clusters(data, options.cluster_threshold_m, result);
 }
 
 } // namespace
@@ -985,6 +1079,7 @@ GeocodeQueryResult run_geocode_query_internal(
     const auto total_start = std::chrono::steady_clock::now();
     GeocodeQueryResult result;
     result.input = input;
+    result.viewport = options.viewport;
 
     const auto norm_start = std::chrono::steady_clock::now();
     result.normalized_query = normalizeSearchText(input);
@@ -1042,12 +1137,14 @@ GeocodeQueryResult run_geocode_query_internal(
     const auto ranking_start = std::chrono::steady_clock::now();
     result.ranked_candidates.reserve(candidates.size());
     for (auto& [_, entry] : candidates) {
+        apply_viewport_evidence(data, options.viewport, entry.candidate);
         result.ranked_candidates.push_back(std::move(entry.candidate));
     }
     std::sort(result.ranked_candidates.begin(), result.ranked_candidates.end(), candidate_less);
     if (options.max_ranked_candidates > 0 && result.ranked_candidates.size() > options.max_ranked_candidates) {
         result.ranked_candidates.resize(options.max_ranked_candidates);
     }
+    build_result_clusters(data, options.cluster_threshold_m, result);
     const auto ranking_end = std::chrono::steady_clock::now();
     result.timings.ranking_ms = elapsed_ms(ranking_start, ranking_end);
     result.timings.total_ms = elapsed_ms(total_start, ranking_end);
