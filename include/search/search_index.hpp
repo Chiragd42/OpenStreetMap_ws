@@ -61,6 +61,10 @@ struct SearchIndex {
     std::vector<IndexedName> names;
     std::vector<SuffixRef> suffix_array;
     std::array<BkTree, 4> fuzzy_trees;
+    std::array<
+        std::unordered_map<GridCellKey, std::vector<std::uint32_t>, GridCellKeyHash>,
+        static_cast<std::size_t>(PoiCategory::Other) + 1>
+        poi_cells_by_category;
 };
 
 struct SearchIndexMetrics {

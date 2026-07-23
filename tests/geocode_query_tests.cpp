@@ -285,6 +285,40 @@ int main() {
     expect_eq_u32(kiel_anchor.ranked_candidates.front().ref.index, 0, "synthetic kiel reference resolves to expected house");
     expect_true(nearest_fixture.pois.size() == 3, "synthetic nearest-category fixture has two parks and a closer non-park");
 
+    const auto nearest_park = osm::search::runGeocodeQuery(
+        nearest_fixture,
+        nearest_fixture_index,
+        "Closest Park to Kaistrasse 5, Kiel");
+    expect_true(nearest_park.nearest_category_intent, "nearest park intent recognized");
+    expect_true(nearest_park.nearest_category == osm::PoiCategory::Park, "nearest park category recognized");
+    expect_true(nearest_park.reference_resolved, "nearest park reference resolved");
+    expect_true(!nearest_park.ranked_candidates.empty(), "nearest park has candidates");
+    expect_true(nearest_park.ranked_candidates.front().ref.type == osm::SearchObjectType::Poi, "nearest park returns poi");
+    expect_eq_u32(nearest_park.ranked_candidates.front().ref.index, 0, "nearest park excludes closer cafe");
+    expect_true(nearest_fixture.pois[nearest_park.ranked_candidates.front().ref.index].category == osm::PoiCategory::Park, "nearest park result has requested category");
+    expect_true(nearest_park.ranked_candidates.front().nearest_distance_m > 0.0, "nearest park records positive distance");
+    expect_true(nearest_park.spatial_cells_examined > 0, "nearest park examines occupied spatial cells");
+    expect_true(nearest_park.spatial_pois_tested > 0, "nearest park tests category pois");
+
+    const auto nearest_parks_synonym = osm::search::runGeocodeQuery(
+        nearest_fixture,
+        nearest_fixture_index,
+        "Nearest parks near Kaistrasse 5 Kiel",
+        osm::search::GeocodeQueryOptions{.max_ranked_candidates = 1});
+    expect_true(nearest_parks_synonym.nearest_category_intent, "nearest plural synonym intent recognized");
+    expect_true(nearest_parks_synonym.reference_resolved, "nearest plural synonym reference resolved");
+    expect_true(nearest_parks_synonym.ranked_candidates.size() == 1, "nearest category respects result limit");
+    expect_eq_u32(nearest_parks_synonym.ranked_candidates.front().ref.index, 0, "nearest plural synonym top park");
+
+    const auto unresolved_nearest = osm::search::runGeocodeQuery(
+        nearest_fixture,
+        nearest_fixture_index,
+        "Closest park from Missing Street 999 Nowhere");
+    expect_true(unresolved_nearest.nearest_category_intent, "unresolved nearest intent still recognized");
+    expect_true(!unresolved_nearest.reference_resolved, "unresolved nearest reference marked unresolved");
+    expect_true(unresolved_nearest.ranked_candidates.empty(), "unresolved nearest returns no unrelated fallback");
+    expect_true(!unresolved_nearest.failure_reason.empty(), "unresolved nearest has structured failure reason");
+
     if (failures != 0) {
         std::cerr << failures << " geocode query test(s) failed\n";
         return EXIT_FAILURE;

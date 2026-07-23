@@ -7,12 +7,22 @@
 #include <cmath>
 #include <iterator>
 #include <map>
+#include <optional>
+#include <queue>
 #include <set>
 #include <string_view>
 #include <tuple>
 #include <unordered_set>
 
 namespace osm::search {
+
+GeocodeQueryResult run_geocode_query_internal(
+    const DataStore& data,
+    const SearchIndex& index,
+    const std::string& input,
+    const GeocodeQueryOptions& options,
+    bool allow_nearest_intent);
+
 namespace {
 
 struct TokenSpan {
@@ -34,6 +44,12 @@ struct CandidateAccumulatorEntry {
 
 using CandidateMap = std::map<SearchObjectRef, CandidateAccumulatorEntry>;
 
+struct NearestCategoryIntent {
+    PoiCategory category{PoiCategory::Other};
+    std::string category_text;
+    std::string reference_query;
+};
+
 [[nodiscard]] double elapsed_ms(const std::chrono::steady_clock::time_point start, const std::chrono::steady_clock::time_point end) {
     return std::chrono::duration<double, std::milli>(end - start).count();
 }
@@ -42,6 +58,19 @@ using CandidateMap = std::map<SearchObjectRef, CandidateAccumulatorEntry>;
     return std::any_of(value.begin(), value.end(), [](const char c) {
         return c >= '0' && c <= '9';
     });
+}
+
+[[nodiscard]] std::optional<PoiCategory> poi_category_from_query(std::string_view value) {
+    if (value == "shop" || value == "shops") return PoiCategory::Shop;
+    if (value == "restaurant" || value == "restaurants") return PoiCategory::Restaurant;
+    if (value == "cafe" || value == "cafes") return PoiCategory::Cafe;
+    if (value == "fast food" || value == "fastfood") return PoiCategory::FastFood;
+    if (value == "park" || value == "parks") return PoiCategory::Park;
+    if (value == "hotel" || value == "hotels") return PoiCategory::Hotel;
+    if (value == "school" || value == "schools") return PoiCategory::School;
+    if (value == "hospital" || value == "hospitals") return PoiCategory::Hospital;
+    if (value == "station" || value == "stations") return PoiCategory::Station;
+    return std::nullopt;
 }
 
 [[nodiscard]] bool is_single_letter_token(std::string_view token) {
@@ -91,6 +120,29 @@ using CandidateMap = std::map<SearchObjectRef, CandidateAccumulatorEntry>;
         out += tokens[i];
     }
     return out;
+}
+
+[[nodiscard]] std::optional<NearestCategoryIntent> parse_nearest_category_intent(
+    const std::vector<std::string>& tokens) {
+    if (tokens.size() < 4 || (tokens.front() != "closest" && tokens.front() != "nearest")) {
+        return std::nullopt;
+    }
+    for (std::size_t connector = 2; connector + 1 < tokens.size(); ++connector) {
+        if (tokens[connector] != "to" && tokens[connector] != "near" && tokens[connector] != "from") {
+            continue;
+        }
+        const auto category_text = join_tokens(tokens, 1, connector);
+        const auto category = poi_category_from_query(category_text);
+        if (!category.has_value()) {
+            return std::nullopt;
+        }
+        return NearestCategoryIntent{
+            .category = *category,
+            .category_text = category_text,
+            .reference_query = join_tokens(tokens, connector + 1, tokens.size()),
+        };
+    }
+    return std::nullopt;
 }
 
 [[nodiscard]] bool spans_overlap(const std::size_t a_begin, const std::size_t a_end, const std::size_t b_begin, const std::size_t b_end) {
@@ -577,6 +629,67 @@ struct LogicalRegion {
     return earth_radius_m * c;
 }
 
+[[nodiscard]] double cell_distance_lower_bound_m(
+    const double query_lat,
+    const double query_lon,
+    const GridCellKey cell,
+    const float cell_size_deg) {
+    constexpr double earth_radius_m = 6371000.0;
+    constexpr double pi = 3.14159265358979323846;
+    const auto to_rad = [](const double deg) { return deg * pi / 180.0; };
+    const double scale = static_cast<double>(cell_size_deg);
+    const double min_lat = static_cast<double>(cell.y) * scale;
+    const double max_lat = static_cast<double>(cell.y + 1) * scale;
+    const double min_lon = static_cast<double>(cell.x) * scale;
+    const double max_lon = static_cast<double>(cell.x + 1) * scale;
+
+    double lon_delta = 0.0;
+    if (query_lon < min_lon) lon_delta = min_lon - query_lon;
+    else if (query_lon > max_lon) lon_delta = query_lon - max_lon;
+    lon_delta = std::min(lon_delta, 360.0 - std::min(lon_delta, 360.0));
+
+    const double query_lat_rad = to_rad(query_lat);
+    const double lon_delta_rad = to_rad(lon_delta);
+    const double a = std::sin(query_lat_rad);
+    const double b = std::cos(query_lat_rad) * std::cos(lon_delta_rad);
+    const double unconstrained_lat = std::atan2(a, b);
+    const double min_lat_rad = to_rad(min_lat);
+    const double max_lat_rad = to_rad(max_lat);
+    const double closest_lat = std::clamp(unconstrained_lat, min_lat_rad, max_lat_rad);
+    const double max_dot = std::clamp(
+        a * std::sin(closest_lat) + b * std::cos(closest_lat),
+        -1.0,
+        1.0);
+    return earth_radius_m * std::acos(max_dot);
+}
+
+[[nodiscard]] std::string object_label(const DataStore& data, const SearchObjectRef& ref) {
+    const auto resolve = [&](const StringId id) -> std::string {
+        return id != kInvalidStringId && id < data.strings.size() ? data.strings.resolve(id) : std::string{};
+    };
+    switch (ref.type) {
+        case SearchObjectType::House: {
+            if (ref.index >= data.houses.size()) return {};
+            const auto& house = data.houses[ref.index];
+            auto label = resolve(house.street_name_id);
+            const auto number = resolve(house.house_number_id);
+            const auto city = resolve(house.city_id);
+            if (!number.empty()) label += (label.empty() ? "" : " ") + number;
+            if (!city.empty()) label += (label.empty() ? "" : ", ") + city;
+            return label;
+        }
+        case SearchObjectType::Poi:
+            return ref.index < data.pois.size() ? resolve(data.pois[ref.index].name_id) : std::string{};
+        case SearchObjectType::Locality:
+            return ref.index < data.localities.size() ? resolve(data.localities[ref.index].name_id) : std::string{};
+        case SearchObjectType::Street:
+            return ref.index < data.streets.size() ? resolve(data.streets[ref.index].name_id) : std::string{};
+        case SearchObjectType::Region:
+            return ref.index < data.regions.size() ? resolve(data.regions[ref.index].name_id) : std::string{};
+    }
+    return {};
+}
+
 [[nodiscard]] double best_distance_to_locality_m(const DataStore& data, const QueryInterpretation& interpretation, const SearchObjectRef& ref) {
     double obj_lat = 0.0;
     double obj_lon = 0.0;
@@ -709,12 +822,137 @@ void retrieve_named_candidates(const DataStore& data, const SearchIndex& index, 
     return lhs.ref < rhs.ref;
 }
 
+void run_nearest_category_query(
+    const DataStore& data,
+    const SearchIndex& index,
+    const NearestCategoryIntent& intent,
+    const GeocodeQueryOptions& options,
+    GeocodeQueryResult& result) {
+    result.nearest_category_intent = true;
+    result.nearest_category = intent.category;
+    result.reference_query = intent.reference_query;
+    QueryInterpretation interpretation;
+    interpretation.intent = QueryIntent::NearestCategory;
+    interpretation.normalized_query = result.normalized_query;
+    interpretation.tokens = tokenizeNormalizedText(result.normalized_query);
+    interpretation.entity_name = intent.category_text;
+    result.interpretations.push_back(std::move(interpretation));
+
+    GeocodeQueryOptions reference_options = options;
+    reference_options.max_ranked_candidates = 20;
+    const auto reference = run_geocode_query_internal(
+        data,
+        index,
+        intent.reference_query,
+        reference_options,
+        false);
+    const auto usable_reference = std::find_if(
+        reference.ranked_candidates.begin(),
+        reference.ranked_candidates.end(),
+        [&](const GeocodeCandidate& candidate) {
+            double lat = 0.0;
+            double lon = 0.0;
+            return candidate.unexplained_token_count == 0 &&
+                   (candidate.exact_address_match || candidate.exact_name_match) &&
+                   object_coordinate(data, candidate.ref, lat, lon);
+        });
+    if (usable_reference == reference.ranked_candidates.end() ||
+        !object_coordinate(data, usable_reference->ref, result.reference_lat, result.reference_lon)) {
+        result.failure_reason = "reference_not_resolved";
+        return;
+    }
+    result.reference_resolved = true;
+    result.reference_label = object_label(data, usable_reference->ref);
+
+    const auto& cells = index.poi_cells_by_category[static_cast<std::size_t>(intent.category)];
+    if (cells.empty()) {
+        result.failure_reason = "category_has_no_pois";
+        return;
+    }
+
+    struct CellEntry {
+        double lower_bound_m{0.0};
+        GridCellKey key{};
+    };
+    const auto farther_cell = [](const CellEntry& lhs, const CellEntry& rhs) {
+        if (lhs.lower_bound_m != rhs.lower_bound_m) return lhs.lower_bound_m > rhs.lower_bound_m;
+        if (lhs.key.x != rhs.key.x) return lhs.key.x > rhs.key.x;
+        return lhs.key.y > rhs.key.y;
+    };
+    std::priority_queue<CellEntry, std::vector<CellEntry>, decltype(farther_cell)> pending_cells(farther_cell);
+    for (const auto& [key, _] : cells) {
+        pending_cells.push(CellEntry{
+            .lower_bound_m = cell_distance_lower_bound_m(
+                result.reference_lat,
+                result.reference_lon,
+                key,
+                data.grid.cell_size_deg),
+            .key = key,
+        });
+    }
+
+    struct PoiDistance {
+        double distance_m{0.0};
+        std::uint32_t poi_index{0};
+    };
+    const auto nearer_poi = [](const PoiDistance& lhs, const PoiDistance& rhs) {
+        if (lhs.distance_m != rhs.distance_m) return lhs.distance_m < rhs.distance_m;
+        return lhs.poi_index < rhs.poi_index;
+    };
+    std::priority_queue<PoiDistance, std::vector<PoiDistance>, decltype(nearer_poi)> best_pois(nearer_poi);
+    const std::size_t limit = options.max_ranked_candidates;
+
+    while (!pending_cells.empty()) {
+        const auto cell = pending_cells.top();
+        if (limit > 0 && best_pois.size() >= limit && cell.lower_bound_m > best_pois.top().distance_m) {
+            break;
+        }
+        pending_cells.pop();
+        ++result.spatial_cells_examined;
+        const auto found = cells.find(cell.key);
+        if (found == cells.end()) continue;
+        for (const auto poi_index : found->second) {
+            if (poi_index >= data.pois.size() || data.pois[poi_index].category != intent.category) continue;
+            ++result.spatial_pois_tested;
+            const auto& poi = data.pois[poi_index];
+            const PoiDistance candidate{
+                .distance_m = haversine_m(result.reference_lat, result.reference_lon, poi.lat, poi.lon),
+                .poi_index = poi_index,
+            };
+            if (limit == 0 || best_pois.size() < limit) {
+                best_pois.push(candidate);
+            } else if (nearer_poi(candidate, best_pois.top())) {
+                best_pois.pop();
+                best_pois.push(candidate);
+            }
+        }
+    }
+
+    std::vector<PoiDistance> ordered;
+    ordered.reserve(best_pois.size());
+    while (!best_pois.empty()) {
+        ordered.push_back(best_pois.top());
+        best_pois.pop();
+    }
+    std::sort(ordered.begin(), ordered.end(), nearer_poi);
+    result.ranked_candidates.reserve(ordered.size());
+    for (const auto& match : ordered) {
+        GeocodeCandidate candidate;
+        candidate.ref = SearchObjectRef{.type = SearchObjectType::Poi, .index = match.poi_index};
+        candidate.interpretation_index = 0;
+        candidate.nearest_distance_m = match.distance_m;
+        result.ranked_candidates.push_back(candidate);
+    }
+    if (result.ranked_candidates.empty()) result.failure_reason = "category_has_no_pois";
+}
+
 } // namespace
 
 const char* queryIntentName(const QueryIntent intent) {
     switch (intent) {
         case QueryIntent::Address: return "Address";
         case QueryIntent::NamedObject: return "NamedObject";
+        case QueryIntent::NearestCategory: return "NearestCategory";
         case QueryIntent::Unknown: return "Unknown";
     }
     return "Unknown";
@@ -738,11 +976,12 @@ int regionSpecificity(const std::int32_t admin_level) {
     }
 }
 
-GeocodeQueryResult runGeocodeQuery(
+GeocodeQueryResult run_geocode_query_internal(
     const DataStore& data,
     const SearchIndex& index,
     const std::string& input,
-    const GeocodeQueryOptions& options) {
+    const GeocodeQueryOptions& options,
+    const bool allow_nearest_intent) {
     const auto total_start = std::chrono::steady_clock::now();
     GeocodeQueryResult result;
     result.input = input;
@@ -752,6 +991,19 @@ GeocodeQueryResult runGeocodeQuery(
     const auto tokens = tokenizeNormalizedText(result.normalized_query);
     const auto norm_end = std::chrono::steady_clock::now();
     result.timings.normalization_ms = elapsed_ms(norm_start, norm_end);
+
+    if (allow_nearest_intent) {
+        const auto nearest_intent = parse_nearest_category_intent(tokens);
+        if (nearest_intent.has_value()) {
+            const auto interp_start = std::chrono::steady_clock::now();
+            run_nearest_category_query(data, index, *nearest_intent, options, result);
+            const auto end = std::chrono::steady_clock::now();
+            result.timings.interpretation_ms = elapsed_ms(interp_start, end);
+            result.timings.candidate_lookup_ms = result.timings.interpretation_ms;
+            result.timings.total_ms = elapsed_ms(total_start, end);
+            return result;
+        }
+    }
 
     const auto interp_start = std::chrono::steady_clock::now();
     append_interpretations_for_tokens(index, tokens, QueryMatchStrategy::Original, result.interpretations);
@@ -800,6 +1052,14 @@ GeocodeQueryResult runGeocodeQuery(
     result.timings.ranking_ms = elapsed_ms(ranking_start, ranking_end);
     result.timings.total_ms = elapsed_ms(total_start, ranking_end);
     return result;
+}
+
+GeocodeQueryResult runGeocodeQuery(
+    const DataStore& data,
+    const SearchIndex& index,
+    const std::string& input,
+    const GeocodeQueryOptions& options) {
+    return run_geocode_query_internal(data, index, input, options, true);
 }
 
 } // namespace osm::search

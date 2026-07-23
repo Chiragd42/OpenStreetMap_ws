@@ -322,6 +322,8 @@ SearchIndexBuildResult buildSearchIndex(const DataStore& data) {
         add_exact_name(index, normalized, ref);
         add_tokens(index, normalized, ref);
         add_full_name(index, full_name_ids, normalized, IndexedNameKind::Poi, ref);
+        const auto cell = to_grid_cell(poi.lon, poi.lat, data.grid.cell_size_deg);
+        index.poi_cells_by_category[static_cast<std::size_t>(poi.category)][cell].push_back(i);
         ++metrics.indexed_pois;
     }
 
