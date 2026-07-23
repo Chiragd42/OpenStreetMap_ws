@@ -93,6 +93,18 @@ std::uint32_t add_poi(osm::DataStore& data, const std::string& name, const float
     return static_cast<std::uint32_t>(data.pois.size() - 1);
 }
 
+std::uint32_t add_poi(
+    osm::DataStore& data,
+    const std::string& name,
+    const osm::PoiCategory category,
+    const float lat,
+    const float lon,
+    std::initializer_list<std::uint32_t> regions) {
+    const auto index = add_poi(data, name, lat, lon, regions);
+    data.pois[index].category = category;
+    return index;
+}
+
 std::uint32_t add_street(osm::DataStore& data, const std::string& name, const float lat, const float lon, std::initializer_list<std::uint32_t> regions) {
     osm::StreetPolyline street;
     street.name_id = data.strings.intern(name);
@@ -153,6 +165,18 @@ osm::DataStore make_test_data() {
     return data;
 }
 
+osm::DataStore make_nearest_category_fixture() {
+    osm::DataStore data;
+    const auto schleswig_holstein = add_region(data, "Schleswig-Holstein", 1000, 4);
+    const auto kiel = add_region(data, "Kiel", 1100, 6);
+    add_locality(data, "Kiel", 54.3233F, 10.1228F, {kiel, schleswig_holstein});
+    add_house(data, "Kaistraße", "5", "Kiel", 54.3150F, 10.1320F, {kiel, schleswig_holstein});
+    add_poi(data, "Hiroshimapark", osm::PoiCategory::Park, 54.3210F, 10.1330F, {kiel, schleswig_holstein});
+    add_poi(data, "Schrevenpark", osm::PoiCategory::Park, 54.3290F, 10.1190F, {kiel, schleswig_holstein});
+    add_poi(data, "Kiel Café", osm::PoiCategory::Cafe, 54.3151F, 10.1321F, {kiel, schleswig_holstein});
+    return data;
+}
+
 } // namespace
 
 int main() {
@@ -192,6 +216,7 @@ int main() {
 
     const auto burger = osm::search::runGeocodeQuery(data, index, "Stuttgart Burger King");
     expect_true(!burger.ranked_candidates.empty(), "burger has candidates");
+    expect_true(burger.ranked_candidates.front().ref.type == osm::SearchObjectType::Poi, "stuttgart burger first result is a poi");
     expect_eq_u32(burger.ranked_candidates.front().ref.index, 0, "stuttgart burger top poi");
     expect_eq_i32(burger.ranked_candidates.front().shared_admin_level, 6, "stuttgart burger level 6 match");
 
@@ -245,6 +270,14 @@ int main() {
     expect_true(region.ranked_candidates.front().ref.type == osm::SearchObjectType::Region, "region name returns region candidate");
     expect_eq_u32(region.ranked_candidates.front().ref.index, 0, "region name top region");
     expect_true(region.ranked_candidates.front().exact_name_match, "region name exact match is recorded");
+
+    auto nearest_fixture = make_nearest_category_fixture();
+    const auto nearest_fixture_index = osm::search::buildSearchIndex(nearest_fixture).index;
+    const auto kiel_anchor = osm::search::runGeocodeQuery(nearest_fixture, nearest_fixture_index, "Kaistrasse 5 Kiel");
+    expect_true(!kiel_anchor.ranked_candidates.empty(), "synthetic kiel reference address has candidates");
+    expect_true(kiel_anchor.ranked_candidates.front().ref.type == osm::SearchObjectType::House, "synthetic kiel reference resolves to house");
+    expect_eq_u32(kiel_anchor.ranked_candidates.front().ref.index, 0, "synthetic kiel reference resolves to expected house");
+    expect_true(nearest_fixture.pois.size() == 3, "synthetic nearest-category fixture has two parks and a closer non-park");
 
     if (failures != 0) {
         std::cerr << failures << " geocode query test(s) failed\n";

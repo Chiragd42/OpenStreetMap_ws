@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.16)
 
 project(osm_geocoder VERSION 0.1.0 LANGUAGES CXX)
 
+include(CTest)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -111,3 +113,10 @@ target_link_libraries(json_tests
     PRIVATE
         geocoder_core
 )
+
+if(BUILD_TESTING)
+    add_test(NAME normalizer_tests COMMAND normalizer_tests)
+    add_test(NAME search_index_tests COMMAND search_index_tests)
+    add_test(NAME geocode_query_tests COMMAND geocode_query_tests)
+    add_test(NAME json_tests COMMAND json_tests)
+endif()
