@@ -1,4 +1,4 @@
-Local C++ geocoder for the Baden-Wuerttemberg OpenStreetMap extract. The app loads OSM data from a PBF or a binary cache, builds search indexes, serves map data over HTTP, supports reverse geocoding, and exposes a forward geocoder through both `/geocode` and the Leaflet UI.
+Local dataset-neutral C++20 OpenStreetMap geocoder. The app loads any regional or country PBF (or a version-6 binary cache), builds runtime search indexes, serves map data over HTTP, supports reverse geocoding, and exposes forward search through `/geocode` and the Leaflet UI.
 
 ## Quick Start
 
@@ -135,10 +135,13 @@ For example, `CompletelyUnknownTown Bahnhofstrasse 10` keeps a fallback interpre
 Ranking is deterministic and prioritizes:
 
 - exact address matches
-- exact name matches
-- candidates sharing the most specific administrative relation with the recognized locality
 - recognized locality over unrecognized locality
+- candidates sharing the most specific administrative relation with the recognized locality
 - fewer unexplained tokens
+- stronger source posting evidence
+- lower fuzzy edit cost
+- exact name matches
+- current-viewport membership and distance to viewport center as soft tie-breakers
 - distance to the locality when applicable
 - stable object ordering as a final tie-breaker
 
@@ -152,7 +155,7 @@ Expected examples:
 
 ## HTTP API
 
-### `GET /geocode?q=<query>`
+### `GET /geocode?q=<query>&bbox=minLon,minLat,maxLon,maxLat`
 
 Returns normalized query text, timing data, interpretations, and ranked results:
 
@@ -195,9 +198,9 @@ The Leaflet UI is in `frontend/index.html`.
 Forward search:
 
 - input placeholder: `Search address or place...`
-- calls `/geocode?q=...`
+- calls `/geocode?q=...&bbox=...` with the current Leaflet viewport
 - shows ranked result cards and query timing
-- draws markers on a dedicated `geocodeLayer`
+- draws one marker per deterministic 20 m result cluster on a dedicated `geocodeLayer`
 - fits or zooms to forward-search results
 
 Reverse mode:
@@ -209,7 +212,7 @@ Reverse mode:
 
 ## Binary Cache
 
-The cache format uses magic `OSMC` and the current supported cache version is 6. Version 6 stores the data required by the forward and reverse geocoder, including POIs, localities, administrative regions, street containment, region-parent containment, and precomputed containment arrays.
+The cache format uses magic `OSMC` and the current supported cache version is 6. Version 6 stores the data required by the forward and reverse geocoder, including POIs, localities, administrative regions, street containment, region-parent containment, and precomputed containment arrays. Sheet 3's suffix arrays, typed BK-trees, and category-specific occupied-cell maps are derived at startup and are intentionally not serialized, so existing v6 caches remain compatible.
 
 Older cache versions are rejected. For example, loading a version 2 cache fails cleanly with:
 
@@ -284,10 +287,15 @@ Required checks:
 - GUI reverse mode still works independently.
 - old cache versions are rejected cleanly.
 
+## Sheet 3 search behavior
+
+- Partial search uses a compact suffix array over complete normalized names, retaining internal spaces. Typo correction uses per-domain BK-trees and bounded whole-query variants.
+- Ranking prioritizes exact-address and locality/admin evidence before using current-viewport membership and viewport-center distance as soft tie-breakers. Out-of-view exact results are never discarded.
+- `closest|nearest <category> to|near|from <reference>` resolves the reference first, then runs category-filtered best-first lookup over occupied spatial cells; the next-cell lower bound safely terminates the search.
+- Duplicate aggregation runs only after relevance ranking and the final result limit. A deterministic DSU computes transitive single-linkage clusters at 20 m; the best-ranked member is representative and JSON retains every member index.
+
 ## Known Limitations
 
-- No fuzzy spelling correction yet; misspellings such as `Bahnhofstrase` are not guaranteed to match.
-- Ranking does not yet prioritize current map viewport.
 - Street geometry is represented in the forward API by a representative point, not a returned polyline.
 - Duplicate OSM-derived address points may appear when multiple source geometries represent the same address.
 - Street-to-region assignment is still an approximation: it samples capped points along each street rather than intersecting the full street geometry with every administrative polygon.
@@ -303,5 +311,24 @@ Generated files are ignored:
 - `data/pbf/*.osm.pbf`
 - `*.bin`
 - `.DS_Store`
+
+## Germany and Kiel validation (opt-in)
+
+Germany extracts are multi-gigabyte inputs and are never downloaded automatically. Obtain a current Germany PBF yourself, then run:
+
+```sh
+make prep-germany PBF=data/pbf/germany-latest.osm.pbf
+make validate-kiel CACHE=data/cache/germany.bin
+```
+
+For one-process HTTP validation (avoids repeated index warm-up):
+
+```sh
+make server CACHE=data/cache/germany.bin
+curl 'http://127.0.0.1:8080/geocode?q=Kaistrasse%205%20Kiel'
+curl 'http://127.0.0.1:8080/geocode?q=Closest%20Park%20to%20Kaistrasse%205%20Kiel'
+```
+
+The automated `geocode_query_tests` include a synthetic Kiel address, two parks, and a closer non-park to verify intent recognition, reference resolution, category filtering, and nearest-distance ordering without requiring the Germany download.
 
 Keep `data/pbf/.gitkeep` and `data/gpkg/.gitkeep` tracked so the expected data directories exist after checkout.

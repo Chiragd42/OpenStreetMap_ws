@@ -355,6 +355,19 @@ int main() {
     expect_true(cluster_post_limit.clusters.size() == 1, "post-limit members remain clustered");
     expect_true(cluster_post_limit.clusters.front().member_candidate_indices.size() == 2, "cluster contains only final-limit members");
 
+    const auto cluster_below_edge = osm::search::runGeocodeQuery(
+        nearest_fixture,
+        nearest_fixture_index,
+        "Chain Place",
+        osm::search::GeocodeQueryOptions{.cluster_threshold_m = 12.0});
+    expect_true(cluster_below_edge.clusters.size() == 3, "points outside configured threshold stay separate");
+    const auto cluster_at_edge = osm::search::runGeocodeQuery(
+        nearest_fixture,
+        nearest_fixture_index,
+        "Chain Place",
+        osm::search::GeocodeQueryOptions{.cluster_threshold_m = 14.0});
+    expect_true(cluster_at_edge.clusters.size() == 1, "inclusive threshold joins transitive chain");
+
     if (failures != 0) {
         std::cerr << failures << " geocode query test(s) failed\n";
         return EXIT_FAILURE;

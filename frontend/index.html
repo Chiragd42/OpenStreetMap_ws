@@ -330,6 +330,22 @@
       background: rgba(255, 255, 255, 0.92);
       transform: translate(-50%, -50%);
     }
+    .search-cluster-count {
+      position: absolute;
+      right: -9px;
+      top: -9px;
+      min-width: 17px;
+      height: 17px;
+      padding: 0 3px;
+      border: 2px solid #ffffff;
+      border-radius: 999px;
+      background: #0f172a;
+      color: #ffffff;
+      box-sizing: border-box;
+      font: 700 10px/13px Inter, ui-sans-serif, system-ui, sans-serif;
+      text-align: center;
+      transform: rotate(45deg);
+    }
     .badge-row {
       display: flex;
       flex-wrap: wrap;
@@ -589,10 +605,10 @@
       });
     }
 
-    function searchMarkerIcon(type) {
+    function searchMarkerIcon(type, count = 1) {
       return L.divIcon({
         className: "",
-        html: `<span class="search-pin" style="background:${escapeHtml(resultColor(type))}"></span>`,
+        html: `<span class="search-pin" style="background:${escapeHtml(resultColor(type))}">${count > 1 ? `<span class="search-cluster-count">${escapeHtml(count)}</span>` : ""}</span>`,
         iconSize: [22, 22],
         iconAnchor: [11, 22],
         popupAnchor: [0, -22],
@@ -671,7 +687,7 @@
         const lon = Number(item.lon);
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
         const marker = L.marker([lat, lon], {
-          icon: searchMarkerIcon(result.type),
+          icon: searchMarkerIcon(result.type, item.count),
           title: item.count > 1 ? `${item.count} nearby results` : (result.name || "Search result"),
           riseOnHover: true,
         });

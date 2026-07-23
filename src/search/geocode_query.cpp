@@ -711,17 +711,21 @@ void improve_candidate(CandidateMap& candidates, GeocodeCandidate candidate, con
     auto& current = it->second;
     const auto current_tuple = std::make_tuple(
         current.candidate.exact_address_match,
-        current.candidate.exact_name_match,
         current.candidate.locality_recognized,
         current.specificity,
         -static_cast<long long>(current.candidate.unexplained_token_count),
+        current.candidate.source_name_postings,
+        -static_cast<long long>(current.candidate.edit_cost),
+        current.candidate.exact_name_match,
         -current.candidate.distance_to_locality_m);
     const auto next_tuple = std::make_tuple(
         candidate.exact_address_match,
-        candidate.exact_name_match,
         candidate.locality_recognized,
         specificity,
         -static_cast<long long>(candidate.unexplained_token_count),
+        candidate.source_name_postings,
+        -static_cast<long long>(candidate.edit_cost),
+        candidate.exact_name_match,
         -candidate.distance_to_locality_m);
     if (next_tuple > current_tuple) {
         current = CandidateAccumulatorEntry{.candidate = candidate, .specificity = specificity};

@@ -1,12 +1,14 @@
-.PHONY: prep server ui up
+.PHONY: prep prep-germany validate-kiel server ui up
 
 BUILD_DIR := build-release
 BINARY := $(BUILD_DIR)/osm_geocoder
 PBF_DIR ?= data/pbf
 CACHE_DIR ?= data/cache
+DATASET ?= auto
 DETECTED_PBF := $(firstword $(wildcard $(PBF_DIR)/*.osm.pbf))
 PBF ?= $(DETECTED_PBF)
-CACHE ?= $(CACHE_DIR)/$(notdir $(basename $(basename $(PBF)))).bin
+DATASET_NAME := $(if $(filter auto,$(DATASET)),$(notdir $(basename $(basename $(PBF)))),$(DATASET))
+CACHE ?= $(CACHE_DIR)/$(DATASET_NAME).bin
 PORT ?= 8080
 UI_PORT ?= 5500
 
@@ -56,6 +58,19 @@ prep:
 server:
 	@echo "Using CACHE : $(CACHE)"
 	./$(BINARY) --load-cache=$(CACHE) --serve --port=$(PORT)
+
+prep-germany:
+	@if [ "$(origin PBF)" != "command line" ] || [ -z "$(PBF)" ] || [ ! -f "$(PBF)" ]; then \
+		echo "Germany PBF not found. Download it explicitly, then run:"; \
+		echo "  make prep-germany PBF=data/pbf/germany-latest.osm.pbf"; \
+		exit 1; \
+	fi
+	$(MAKE) prep DATASET=germany PBF="$(PBF)" CACHE="$(CACHE_DIR)/germany.bin"
+
+validate-kiel:
+	@if [ ! -f "$(CACHE)" ]; then echo "Cache not found: $(CACHE)"; exit 1; fi
+	./$(BINARY) --load-cache="$(CACHE)" --no-merge-streets --test-geocode-query="Kaistrasse 5 Kiel"
+	./$(BINARY) --load-cache="$(CACHE)" --no-merge-streets --test-geocode-query="Closest Park to Kaistrasse 5 Kiel"
 
 ui:
 	@echo "Open GUI: http://127.0.0.1:$(UI_PORT)/frontend/index.html"

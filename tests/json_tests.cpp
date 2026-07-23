@@ -273,6 +273,9 @@ void geocode_json_includes_sheet3_metadata() {
     result.input = "closest cafe to test";
     result.normalized_query = "closest cafe to test";
     result.nearest_category_intent = true;
+    result.nearest_category = osm::PoiCategory::Cafe;
+    result.viewport = osm::BBox{.min_lon = 8.0, .min_lat = 47.0, .max_lon = 10.0, .max_lat = 49.0};
+    result.result_bounds = osm::BBox{.min_lon = 9.0, .min_lat = 48.0, .max_lon = 9.0, .max_lat = 48.0};
     result.reference_resolved = true;
     result.reference_label = "Test 1";
     result.reference_lat = 48.0;
@@ -294,6 +297,10 @@ void geocode_json_includes_sheet3_metadata() {
 
     const auto json = osm::serialize_geocode_json(data, result);
     expect_contains(json, "\"nearest_category_intent\":true", "nearest intent metadata serialized");
+    expect_contains(json, "\"nearest_category\":\"cafe\"", "nearest category serialized");
+    expect_contains(json, "\"viewport\":{\"min_lon\":8", "viewport bounds serialized");
+    expect_contains(json, "\"result_bounds\":{\"min_lon\":9", "result bounds serialized");
+    expect_contains(json, "\"category\":\"cafe\"", "POI category serialized");
     expect_contains(json, "\"in_viewport\":true", "viewport evidence serialized");
     expect_contains(json, "\"nearest_distance_m\":42", "nearest distance serialized");
     expect_contains(json, "\"clusters\":[{\"representative_index\":0", "clusters serialized");

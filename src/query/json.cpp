@@ -153,6 +153,19 @@ std::string candidate_postcode(const DataStore& data, const SearchObjectRef& ref
     return {};
 }
 
+void serialize_optional_bbox(std::ostringstream& out, const std::optional<BBox>& bbox) {
+    if (!bbox.has_value()) {
+        out << "null";
+        return;
+    }
+    out << '{'
+        << "\"min_lon\":" << bbox->min_lon << ','
+        << "\"min_lat\":" << bbox->min_lat << ','
+        << "\"max_lon\":" << bbox->max_lon << ','
+        << "\"max_lat\":" << bbox->max_lat
+        << '}';
+}
+
 std::string rank_reason(const search::GeocodeCandidate& candidate) {
     std::string reason;
     if (candidate.match_strategy == search::QueryMatchStrategy::Fuzzy) reason += "typo corrected";
@@ -710,6 +723,14 @@ std::string serialize_geocode_json(const DataStore& data, const search::GeocodeQ
         << "\"query\":\"" << escape_json(result.input) << "\","
         << "\"normalized_query\":\"" << escape_json(result.normalized_query) << "\","
         << "\"nearest_category_intent\":" << (result.nearest_category_intent ? "true" : "false") << ','
+        << "\"nearest_category\":";
+    if (result.nearest_category.has_value()) out << '"' << poi_category_json(*result.nearest_category) << '"';
+    else out << "null";
+    out << ",\"viewport\":";
+    serialize_optional_bbox(out, result.viewport);
+    out << ",\"result_bounds\":";
+    serialize_optional_bbox(out, result.result_bounds);
+    out << ','
         << "\"reference_resolved\":" << (result.reference_resolved ? "true" : "false") << ','
         << "\"reference_query\":\"" << escape_json(result.reference_query) << "\","
         << "\"reference_label\":\"" << escape_json(result.reference_label) << "\","
@@ -764,6 +785,13 @@ std::string serialize_geocode_json(const DataStore& data, const search::GeocodeQ
             << "\"name\":\"" << escape_json(geocode_object_name(data, candidate.ref)) << "\","
             << "\"city\":\"" << escape_json(candidate_city(data, candidate.ref)) << "\","
             << "\"postcode\":\"" << escape_json(candidate_postcode(data, candidate.ref)) << "\","
+            << "\"category\":";
+        if (candidate.ref.type == SearchObjectType::Poi && candidate.ref.index < data.pois.size()) {
+            out << '"' << poi_category_json(data.pois[candidate.ref.index].category) << '"';
+        } else {
+            out << "null";
+        }
+        out << ','
             << "\"lat\":" << point.lat << ','
             << "\"lon\":" << point.lon << ','
             << "\"exact_address\":" << (candidate.exact_address_match ? "true" : "false") << ','

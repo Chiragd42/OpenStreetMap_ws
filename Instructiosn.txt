@@ -1,7 +1,10 @@
-After setting up the project folder, place the Baden-Württemberg_data_file .osm.pbf inside the data/pbf folder.
+After setting up the project folder, place any regional or country .osm.pbf dataset inside data/pbf.
 
 
-The ->  make prep command automatically finds the .osm.pbf file, parses it, and creates the required cache. 
+The -> make prep command automatically finds the first .osm.pbf file, parses it, and creates a matching cache.
+For an explicit dataset use -> make prep DATASET=my-region PBF=/path/to/my-region.osm.pbf
+Germany is opt-in (large download): after obtaining the PBF, use -> make prep-germany PBF=data/pbf/germany-latest.osm.pbf
+Validate Kiel with -> make validate-kiel CACHE=data/cache/germany.bin
 
 First, open a terminal and run-> make prep
 

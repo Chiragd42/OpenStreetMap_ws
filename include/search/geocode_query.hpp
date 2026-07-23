@@ -42,7 +42,6 @@ struct QueryInterpretation {
     bool exact_address_key_match{false};
     std::size_t raw_candidate_count{0};
     std::size_t edit_cost{0};
-    std::size_t source_name_postings{0};
 };
 
 struct GeocodeCandidate {

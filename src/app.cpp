@@ -756,7 +756,7 @@ int App::run(const AppOptions& options) const {
     const auto search_index_build = search::buildSearchIndex(data);
     const auto& search_metrics = search_index_build.metrics;
 
-    std::cout << "OSM geocoder pipeline initialized (PBF-first, target: Baden-Wuerttemberg)." << '\n';
+    std::cout << "OSM geocoder pipeline initialized (dataset-neutral, PBF-first)." << '\n';
     std::cout << "Input source: " << source_description << '\n';
 
     const auto reduced =
