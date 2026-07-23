@@ -155,7 +155,7 @@ Expected examples:
 
 ## HTTP API
 
-### `GET /geocode?q=<query>&bbox=minLon,minLat,maxLon,maxLat`
+### `GET /geocode?q=<query>&bbox=minLon,minLat,maxLon,maxLat&limit=100&cluster_m=20`
 
 Returns normalized query text, timing data, interpretations, and ranked results:
 
@@ -176,7 +176,7 @@ Returns normalized query text, timing data, interpretations, and ranked results:
 }
 ```
 
-Missing `q` returns `400`. Empty `q` and punctuation-only queries return the normal empty-result JSON shape.
+`bbox` enables literal current-view behavior: when at least one candidate is inside, only in-view candidates are returned; when none is inside, globally ranked candidates are returned with `viewport_fallback: true`. The response also reports `viewport_filtered`, global/in-view candidate counts, and `corrected_query` when the best result used fuzzy correction. `limit` accepts `1..500` (default `200`), and `cluster_m` accepts `0..1000` metres (default `20`). Missing `q` returns `400`; invalid optional parameters return `400`. Empty `q`, connector-only input, and punctuation-only queries return the normal empty-result JSON shape.
 
 ### `GET /reverse?lat=<lat>&lon=<lon>`
 
@@ -200,6 +200,7 @@ Forward search:
 - input placeholder: `Search address or place...`
 - calls `/geocode?q=...&bbox=...` with the current Leaflet viewport
 - shows ranked result cards and query timing
+- provides clickable examples for exact addresses, locality-aware POIs, partial search, English/German university aliases, and nearest-category intent
 - draws one marker per deterministic 20 m result cluster on a dedicated `geocodeLayer`
 - fits or zooms to forward-search results
 
@@ -290,7 +291,7 @@ Required checks:
 ## Sheet 3 search behavior
 
 - Partial search uses a compact suffix array over complete normalized names, retaining internal spaces. Typo correction uses per-domain BK-trees and bounded whole-query variants.
-- Ranking prioritizes exact-address and locality/admin evidence before using current-viewport membership and viewport-center distance as soft tie-breakers. Out-of-view exact results are never discarded.
+- Ranking prioritizes exact-address and locality/admin evidence before viewport tie-breakers. If a bbox contains any matches, out-of-view candidates are then filtered; if it contains none, global results remain available with explicit fallback metadata.
 - `closest|nearest <category> to|near|from <reference>` resolves the reference first, then runs category-filtered best-first lookup over occupied spatial cells; the next-cell lower bound safely terminates the search.
 - Duplicate aggregation runs only after relevance ranking and the final result limit. A deterministic DSU computes transitive single-linkage clusters at 20 m; the best-ranked member is representative and JSON retains every member index.
 

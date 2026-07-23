@@ -147,6 +147,23 @@
       color: #334155;
       font-size: inherit;
     }
+    .example-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 6px;
+    }
+    .example-chip {
+      border: 1px solid #cbd5e1;
+      border-radius: 999px;
+      padding: 3px 7px;
+      background: #ffffff;
+      color: #334155;
+      font-size: 10px;
+      cursor: pointer;
+    }
+    .example-chip:hover,
+    .example-chip:focus-visible { border-color: #2563eb; color: #1d4ed8; outline: none; }
     .search-card {
       margin: 5px 0 0;
       padding: 6px;
@@ -435,7 +452,14 @@
           <input id="geocodeInput" class="search-input" type="search" placeholder="Search address or place..." autocomplete="off" />
           <button id="geocodeButton" class="btn btn-primary" type="button">Search</button>
         </div>
-        <p class="search-support">Supports exact, typo-tolerant, and partial search.</p>
+        <p class="search-support">Exact addresses and names, bounded typo correction, substring completion, current-view filtering with global fallback, and nearest-category queries.</p>
+        <div class="example-chips" aria-label="Example searches">
+          <button class="example-chip" type="button" data-query="Aalen Bahnhofstrasse 10">Address</button>
+          <button class="example-chip" type="button" data-query="Stuttgart Burger King">Locality + POI</button>
+          <button class="example-chip" type="button" data-query="Aalen Bahn 10">Partial</button>
+          <button class="example-chip" type="button" data-query="University of Stuttgart">English alias</button>
+          <button class="example-chip" type="button" data-query="Closest park to Stuttgart">Nearest park</button>
+        </div>
       </section>
       <div id="geocodeStatus" class="geocode-status"></div>
       <div id="geocodeResults" class="geocode-results"></div>
@@ -494,6 +518,7 @@
     const geocodeButtonEl = document.getElementById("geocodeButton");
     const geocodeStatusEl = document.getElementById("geocodeStatus");
     const geocodeResultsEl = document.getElementById("geocodeResults");
+    const exampleChipEls = document.querySelectorAll(".example-chip");
     const reverseResultBoxEl = document.getElementById("reverseResultBox");
     const reverseResultTextEl = document.getElementById("reverseResultText");
     let refreshTimer = null;
@@ -640,12 +665,20 @@
     function renderGeocodeResults(data) {
       const results = Array.isArray(data.results) ? data.results : [];
       geocodeResultsEl.innerHTML = "";
+      const viewportNote = data.viewport_fallback
+        ? " · no matches in view; showing global results"
+        : data.viewport_filtered
+          ? " · current-view results only"
+          : "";
+      const correctionNote = data.corrected_query
+        ? ` · corrected to “${data.corrected_query}”`
+        : "";
       if (results.length === 0) {
-        geocodeStatusEl.textContent = `${formatTiming(data.timing)} · 0 results`;
+        geocodeStatusEl.textContent = `${formatTiming(data.timing)} · 0 results${viewportNote}${correctionNote}`;
         return;
       }
 
-      geocodeStatusEl.textContent = `${formatTiming(data.timing)} · ${results.length} result${results.length === 1 ? "" : "s"}`;
+      geocodeStatusEl.textContent = `${formatTiming(data.timing)} · ${results.length} result${results.length === 1 ? "" : "s"}${viewportNote}${correctionNote}`;
       const shown = results.slice(0, 10);
       for (let i = 0; i < shown.length; ++i) {
         const result = shown[i];
@@ -723,7 +756,7 @@
       geocodeStatusEl.textContent = "Searching...";
 
       try {
-        const data = await fetchJson(`${backendBase}/geocode?q=${encodeURIComponent(query)}&bbox=${encodeURIComponent(bboxParam())}`, activeGeocodeController.signal);
+        const data = await fetchJson(`${backendBase}/geocode?q=${encodeURIComponent(query)}&bbox=${encodeURIComponent(bboxParam())}&limit=100&cluster_m=20`, activeGeocodeController.signal);
         const results = Array.isArray(data.results) ? data.results : [];
         renderGeocodeResults(data);
         renderGeocodeMarkers(results, data.clusters);
@@ -1110,6 +1143,12 @@
       setReverseMode(!reverseModeEnabled);
     });
     geocodeButtonEl.addEventListener("click", runGeocodeSearch);
+    for (const chip of exampleChipEls) {
+      chip.addEventListener("click", () => {
+        geocodeInputEl.value = chip.dataset.query || "";
+        runGeocodeSearch();
+      });
+    }
     geocodeInputEl.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();

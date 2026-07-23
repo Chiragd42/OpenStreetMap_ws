@@ -56,6 +56,7 @@ struct GeocodeCandidate {
     bool exact_address_match{false};
     bool locality_recognized{false};
     std::size_t unexplained_token_count{std::numeric_limits<std::size_t>::max()};
+    std::size_t matched_entity_token_count{0};
     std::size_t edit_cost{0};
     std::size_t source_name_postings{0};
     double nearest_distance_m{std::numeric_limits<double>::infinity()};
@@ -82,11 +83,17 @@ struct GeocodeQueryTimings {
 struct GeocodeQueryResult {
     std::string input;
     std::string normalized_query;
+    std::string corrected_query;
     std::vector<QueryInterpretation> interpretations;
     std::vector<GeocodeCandidate> ranked_candidates;
     std::vector<GeocodeCluster> clusters;
     std::optional<BBox> viewport;
     std::optional<BBox> result_bounds;
+    bool viewport_applied{false};
+    bool viewport_filtered{false};
+    bool viewport_fallback{false};
+    std::size_t global_candidate_count{0};
+    std::size_t in_viewport_candidate_count{0};
     bool nearest_category_intent{false};
     std::optional<PoiCategory> nearest_category;
     std::string reference_query;

@@ -159,9 +159,16 @@ osm::DataStore make_test_data() {
     add_poi(data, "Burger King", 48.783F, 9.183F, {stuttgart, bw});
     add_poi(data, "Burger King", 48.843F, 10.093F, {aalen, bw});
     add_poi(data, "Studio 54", 48.784F, 9.184F, {stuttgart, bw});
+    add_poi(data, "Universität Stuttgart", osm::PoiCategory::Other, 48.750F, 9.105F, {stuttgart, bw});
+    add_poi(data, "World of Video", osm::PoiCategory::Shop, 48.900F, 8.700F, {bw});
+    add_poi(data, "Copper Lantern Cafe", osm::PoiCategory::Cafe, 48.846F, 10.096F, {aalen, bw});
+    // Deliberately collides with the misspelling in "Burgar King". A literal
+    // short-span hit must not suppress the fully explained fuzzy interpretation.
+    add_poi(data, "Burgar Hut", osm::PoiCategory::FastFood, 48.847F, 10.097F, {aalen, bw});
 
     add_street(data, "Marktstraße", 48.845F, 10.095F, {stuttgart, bw});
     add_street(data, "Marktstraße", 48.780F, 9.180F, {aalen, bw});
+    add_street(data, "Zeraphine Boulevard", 48.847F, 10.097F, {aalen, bw});
     return data;
 }
 
@@ -241,6 +248,28 @@ int main() {
     expect_eq_i32(typo_poi.ranked_candidates.front().shared_admin_level, 6, "typo poi level 6 locality match");
     expect_true(typo_poi.ranked_candidates.front().match_strategy == osm::search::QueryMatchStrategy::Fuzzy, "typo poi marked fuzzy");
 
+    const auto unrelated_typo_address = osm::search::runGeocodeQuery(data, index, "Aaln Zeraphne Boulevrad");
+    expect_true(!unrelated_typo_address.ranked_candidates.empty(), "unrelated multi-token typo has candidates");
+    expect_true(unrelated_typo_address.ranked_candidates.front().ref.type == osm::SearchObjectType::Street, "unrelated typo resolves to street");
+    expect_eq_u32(unrelated_typo_address.ranked_candidates.front().ref.index, 2, "unrelated typo resolves runtime street fixture");
+    expect_true(unrelated_typo_address.ranked_candidates.front().match_strategy == osm::search::QueryMatchStrategy::Fuzzy, "unrelated typo is marked fuzzy");
+    expect_true(!unrelated_typo_address.corrected_query.empty(), "fuzzy result exposes corrected query");
+
+    const auto unrelated_typo_poi = osm::search::runGeocodeQuery(data, index, "Aalen Coppr Lantarn Caffe");
+    expect_true(!unrelated_typo_poi.ranked_candidates.empty(), "unrelated POI typo has candidates");
+    expect_true(unrelated_typo_poi.ranked_candidates.front().ref.type == osm::SearchObjectType::Poi, "unrelated POI typo resolves to POI");
+    expect_eq_u32(unrelated_typo_poi.ranked_candidates.front().ref.index, 5, "unrelated POI typo resolves runtime fixture");
+    expect_true(unrelated_typo_poi.ranked_candidates.front().match_strategy == osm::search::QueryMatchStrategy::Fuzzy, "unrelated POI typo is marked fuzzy");
+
+    const auto exact_unrelated = osm::search::runGeocodeQuery(data, index, "Aalen Copper Lantern Cafe");
+    expect_true(!exact_unrelated.ranked_candidates.empty(), "unrelated exact query has candidates");
+    expect_eq_u32(exact_unrelated.ranked_candidates.front().ref.index, 5, "unrelated exact query keeps expected POI");
+    expect_true(exact_unrelated.ranked_candidates.front().match_strategy == osm::search::QueryMatchStrategy::Original, "exact query is never downgraded to fuzzy");
+    expect_true(exact_unrelated.corrected_query.empty(), "exact query does not claim a correction");
+
+    const auto nonsense = osm::search::runGeocodeQuery(data, index, "qxzv blorf 987654");
+    expect_true(nonsense.ranked_candidates.empty(), "unrecoverable nonsense fails cleanly");
+
     const auto partial_address = osm::search::runGeocodeQuery(data, index, "Aalen Bahn 10");
     expect_true(!partial_address.ranked_candidates.empty(), "partial address has candidates");
     expect_eq_u32(partial_address.ranked_candidates.front().ref.index, 0, "partial address top house");
@@ -279,6 +308,19 @@ int main() {
     expect_true(region.ranked_candidates.front().ref.type == osm::SearchObjectType::Region, "region name returns region candidate");
     expect_eq_u32(region.ranked_candidates.front().ref.index, 0, "region name top region");
     expect_true(region.ranked_candidates.front().exact_name_match, "region name exact match is recorded");
+
+    const auto english_university = osm::search::runGeocodeQuery(data, index, "University of Stuttgart");
+    expect_true(!english_university.ranked_candidates.empty(), "english university alias has candidates");
+    expect_true(english_university.ranked_candidates.front().ref.type == osm::SearchObjectType::Poi, "english university alias returns poi");
+    expect_eq_u32(english_university.ranked_candidates.front().ref.index, 3, "english university alias returns university first");
+    expect_true(english_university.ranked_candidates.front().exact_name_match, "english university alias resolves to exact normalized name");
+
+    const auto german_university = osm::search::runGeocodeQuery(data, index, "Universitaet Stuttgart");
+    expect_true(!german_university.ranked_candidates.empty(), "german transliterated university has candidates");
+    expect_eq_u32(german_university.ranked_candidates.front().ref.index, 3, "german transliterated university returns university first");
+
+    const auto connector_only = osm::search::runGeocodeQuery(data, index, "of");
+    expect_true(connector_only.ranked_candidates.empty(), "connector-only query does not return broad unrelated matches");
 
     auto nearest_fixture = make_nearest_category_fixture();
     const auto nearest_fixture_index = osm::search::buildSearchIndex(nearest_fixture).index;
@@ -328,17 +370,36 @@ int main() {
         index,
         "Burger King",
         osm::search::GeocodeQueryOptions{.viewport = aalen_viewport});
-    expect_true(viewport_equal.ranked_candidates.size() >= 2, "viewport equal-relevance query has both results");
+    expect_true(!viewport_equal.ranked_candidates.empty(), "viewport query has in-view results");
+    expect_true(std::all_of(viewport_equal.ranked_candidates.begin(), viewport_equal.ranked_candidates.end(), [](const auto& candidate) {
+        return candidate.in_viewport;
+    }), "viewport query only returns in-view results");
     expect_eq_u32(viewport_equal.ranked_candidates.front().ref.index, 1, "in-view equal-relevance result wins");
     expect_true(viewport_equal.ranked_candidates.front().in_viewport, "winning equal-relevance result marked in viewport");
+    expect_true(viewport_equal.viewport_applied, "viewport policy is marked applied");
+    expect_true(viewport_equal.viewport_filtered, "out-of-view candidates are marked filtered");
+    expect_true(!viewport_equal.viewport_fallback, "viewport with matches does not use fallback");
+    expect_true(viewport_equal.global_candidate_count >= 2, "viewport metadata retains global candidate count");
 
     const auto viewport_strong_outside = osm::search::runGeocodeQuery(
         data,
         index,
         "Stuttgart Burger King",
         osm::search::GeocodeQueryOptions{.viewport = aalen_viewport});
-    expect_eq_u32(viewport_strong_outside.ranked_candidates.front().ref.index, 0, "strong out-of-view locality match remains first");
-    expect_true(!viewport_strong_outside.ranked_candidates.front().in_viewport, "strong outside result is retained and marked outside");
+    expect_eq_u32(viewport_strong_outside.ranked_candidates.front().ref.index, 1, "literal view policy keeps only Aalen result");
+    expect_true(viewport_strong_outside.ranked_candidates.front().in_viewport, "literal view result is marked inside");
+    expect_true(viewport_strong_outside.viewport_filtered, "strong outside semantic result is filtered when view has matches");
+
+    const osm::BBox empty_viewport{.min_lon = -1.0, .min_lat = -1.0, .max_lon = 1.0, .max_lat = 1.0};
+    const auto viewport_fallback = osm::search::runGeocodeQuery(
+        data,
+        index,
+        "Stuttgart Burger King",
+        osm::search::GeocodeQueryOptions{.viewport = empty_viewport});
+    expect_true(!viewport_fallback.ranked_candidates.empty(), "empty viewport falls back to global results");
+    expect_eq_u32(viewport_fallback.ranked_candidates.front().ref.index, 0, "global fallback preserves semantic ranking");
+    expect_true(viewport_fallback.viewport_fallback, "empty viewport fallback is explicit");
+    expect_true(!viewport_fallback.viewport_filtered, "fallback does not claim filtering");
 
     const auto cluster_chain = osm::search::runGeocodeQuery(nearest_fixture, nearest_fixture_index, "Chain Place");
     expect_true(cluster_chain.ranked_candidates.size() == 3, "cluster chain has three ranked members");

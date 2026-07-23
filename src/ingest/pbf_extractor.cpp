@@ -68,6 +68,8 @@ namespace {
     if (tags.has_tag("amenity", "fast_food")) return PoiCategory::FastFood;
     if (tags.has_tag("amenity", "hospital")) return PoiCategory::Hospital;
     if (tags.has_tag("amenity", "school")) return PoiCategory::School;
+    if (tags.has_tag("amenity", "university")) return PoiCategory::Other;
+    if (tags.has_tag("amenity", "college")) return PoiCategory::Other;
     if (tags.has_tag("railway", "station")) return PoiCategory::Station;
     if (tags.has_tag("public_transport", "station")) return PoiCategory::Station;
     if (tags.has_tag("tourism", "hotel")) return PoiCategory::Hotel;
@@ -96,7 +98,7 @@ namespace {
             if (const auto railway = tag_value_or_empty(tags, "railway"); !railway.empty()) return railway;
             return tag_value_or_empty(tags, "public_transport");
         case PoiCategory::Other:
-            return {};
+            return tag_value_or_empty(tags, "amenity");
     }
     return {};
 }

@@ -452,6 +452,24 @@ std::string handle_api_request(
         }
 
         search::GeocodeQueryOptions options;
+        if (const auto limit_param = get_query_param(request.query, "limit"); limit_param.has_value()) {
+            const auto limit = parse_size_t_query_param(*limit_param);
+            if (!limit.has_value() || *limit == 0 || *limit > 500) {
+                status_code = 400;
+                status_text = "Bad Request";
+                return serialize_error_json("Invalid limit. Expected an integer from 1 to 500");
+            }
+            options.max_ranked_candidates = *limit;
+        }
+        if (const auto cluster_param = get_query_param(request.query, "cluster_m"); cluster_param.has_value()) {
+            const auto cluster_m = parse_double_query_param(*cluster_param);
+            if (!cluster_m.has_value() || *cluster_m < 0.0 || *cluster_m > 1000.0) {
+                status_code = 400;
+                status_text = "Bad Request";
+                return serialize_error_json("Invalid cluster_m. Expected a value from 0 to 1000");
+            }
+            options.cluster_threshold_m = *cluster_m;
+        }
         if (const auto bbox_param = get_query_param(request.query, "bbox"); bbox_param.has_value()) {
             options.viewport = parse_bbox_csv(*bbox_param);
             if (!options.viewport.has_value()) {

@@ -722,12 +722,18 @@ std::string serialize_geocode_json(const DataStore& data, const search::GeocodeQ
     out << '{'
         << "\"query\":\"" << escape_json(result.input) << "\","
         << "\"normalized_query\":\"" << escape_json(result.normalized_query) << "\","
+        << "\"corrected_query\":\"" << escape_json(result.corrected_query) << "\","
         << "\"nearest_category_intent\":" << (result.nearest_category_intent ? "true" : "false") << ','
         << "\"nearest_category\":";
     if (result.nearest_category.has_value()) out << '"' << poi_category_json(*result.nearest_category) << '"';
     else out << "null";
     out << ",\"viewport\":";
     serialize_optional_bbox(out, result.viewport);
+    out << ",\"viewport_applied\":" << (result.viewport_applied ? "true" : "false")
+        << ",\"viewport_filtered\":" << (result.viewport_filtered ? "true" : "false")
+        << ",\"viewport_fallback\":" << (result.viewport_fallback ? "true" : "false")
+        << ",\"global_candidate_count\":" << result.global_candidate_count
+        << ",\"in_viewport_candidate_count\":" << result.in_viewport_candidate_count;
     out << ",\"result_bounds\":";
     serialize_optional_bbox(out, result.result_bounds);
     out << ','
