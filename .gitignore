@@ -1,0 +1,17 @@
+.DS_Store
+**/.DS_Store
+
+build/
+build-*/
+
+*.bin
+data/cache/*
+!data/cache/.gitkeep
+
+data/pbf/*.osm.pbf
+!data/pbf/.gitkeep
+
+data/gpkg/*.gpkg
+
+data/basic-test/output/*
+!data/basic-test/output/.gitkeep
