@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="sheet1-test">
+  <node id="1" lat="48.0000000" lon="9.0000000">
+    <tag k="addr:housenumber" v="7"/>
+  </node>
+  <node id="2" lat="48.0000000" lon="9.0010000"/>
+  <node id="3" lat="48.0010000" lon="9.0010000"/>
+  <node id="4" lat="48.0010000" lon="9.0000000"/>
+  <way id="10">
+    <nd ref="1"/>
+    <nd ref="2"/>
+    <nd ref="3"/>
+    <nd ref="1"/>
+    <tag k="building" v="yes"/>
+  </way>
+  <way id="11">
+    <nd ref="3"/>
+    <nd ref="4"/>
+    <tag k="highway" v="residential"/>
+    <tag k="name" v="Teststraße"/>
+  </way>
+  <relation id="20">
+    <member type="way" ref="10" role="outer"/>
+    <member type="way" ref="11" role="inner"/>
+    <tag k="type" v="multipolygon"/>
+    <tag k="boundary" v="administrative"/>
+    <tag k="admin_level" v="8"/>
+    <tag k="name" v="Teststadt"/>
+  </relation>
+</osm>

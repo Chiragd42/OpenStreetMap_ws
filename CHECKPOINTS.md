@@ -21,7 +21,7 @@ Status legend:
 
 ### 2. Understand and inspect OSM data
 
-- Status: `[ ]`
+- Status: `[x]`
 - Intention: Inspect real nodes, ways, relations, tags, IDs, and references in
   the Germany PBF before writing the extractor.
 - Verification: Explain how a building, street, and administrative boundary
