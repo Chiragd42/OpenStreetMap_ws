@@ -31,11 +31,30 @@ add_executable(osm_inspect
     src/osm_inspector.cpp
 )
 
+add_library(osm_sheet1_core
+    src/basic_test.cpp
+    src/osm_extractor.cpp
+    src/osm_model.cpp
+)
+
+add_executable(osm_sheet1
+    src/sheet1_main.cpp
+)
+
 target_include_directories(osm_inspect PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
+target_include_directories(osm_sheet1_core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
 target_include_directories(osm_inspect SYSTEM PRIVATE
+    ${OSMIUM_INCLUDE_DIR}
+    ${PROTOZERO_INCLUDE_DIR}
+)
+
+target_include_directories(osm_sheet1_core SYSTEM PRIVATE
     ${OSMIUM_INCLUDE_DIR}
     ${PROTOZERO_INCLUDE_DIR}
 )
@@ -47,8 +66,19 @@ target_link_libraries(osm_inspect PRIVATE
     Threads::Threads
 )
 
+target_link_libraries(osm_sheet1_core PRIVATE
+    ZLIB::ZLIB
+    BZip2::BZip2
+    EXPAT::EXPAT
+    Threads::Threads
+)
+
+target_link_libraries(osm_sheet1 PRIVATE osm_sheet1_core)
+
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(osm_inspect PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
+    target_compile_options(osm_sheet1_core PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
+    target_compile_options(osm_sheet1 PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 endif()
 
 if(BUILD_TESTING)
@@ -58,5 +88,15 @@ if(BUILD_TESTING)
             -DINSPECTOR=$<TARGET_FILE:osm_inspect>
             -DFIXTURE=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/inspection.osm
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/assert_inspection.cmake
+    )
+
+    add_test(
+        NAME basic_test_fixture
+        COMMAND ${CMAKE_COMMAND}
+            -DSHEET1=$<TARGET_FILE:osm_sheet1>
+            -DFIXTURE=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/inspection.osm
+            -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/tests/basic-test-input.txt
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/basic-test-output.txt
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/assert_basic_test.cmake
     )
 endif()
