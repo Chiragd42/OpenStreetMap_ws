@@ -1,12 +1,19 @@
 #include "osm_extractor.hpp"
 
+#include <osmium/area/assembler.hpp>
+#include <osmium/area/multipolygon_manager.hpp>
 #include <osmium/handler.hpp>
 #include <osmium/handler/node_locations_for_ways.hpp>
 #include <osmium/index/map/sparse_file_array.hpp>
 #include <osmium/io/any_input.hpp>
+#include <osmium/io/file.hpp>
+#include <osmium/memory/buffer.hpp>
+#include <osmium/osm/area.hpp>
 #include <osmium/osm/node.hpp>
 #include <osmium/osm/relation.hpp>
 #include <osmium/osm/way.hpp>
+#include <osmium/relations/manager_util.hpp>
+#include <osmium/tags/tags_filter.hpp>
 #include <osmium/visitor.hpp>
 
 #include <sys/resource.h>
@@ -19,6 +26,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace sheet1 {
@@ -66,6 +74,13 @@ namespace {
         bounds.maximum.longitude_e7 = std::max(bounds.maximum.longitude_e7, point.longitude_e7);
     }
     return bounds;
+}
+
+void extend_bounds(BoundingBox& bounds, const Coordinate point) {
+    bounds.minimum.latitude_e7 = std::min(bounds.minimum.latitude_e7, point.latitude_e7);
+    bounds.minimum.longitude_e7 = std::min(bounds.minimum.longitude_e7, point.longitude_e7);
+    bounds.maximum.latitude_e7 = std::max(bounds.maximum.latitude_e7, point.latitude_e7);
+    bounds.maximum.longitude_e7 = std::max(bounds.maximum.longitude_e7, point.longitude_e7);
 }
 
 [[nodiscard]] Coordinate bounds_center(const BoundingBox bounds) {
@@ -147,9 +162,160 @@ namespace {
     return seconds + microseconds / 1'000'000.0;
 }
 
+class AdministrativeAreaStore {
+public:
+    AdministrativeAreaStore(DataStore& data, ExtractionStats& stats)
+        : data_(data), stats_(stats) {}
+
+    void add_relation_metadata(const osmium::Relation& relation) {
+        const auto existing = relation_indices_.find(relation.id());
+        if (existing != relation_indices_.end()) {
+            auto& area = data_.administrative_areas[existing->second];
+            area.name = data_.strings.intern(selected_name(relation.tags()));
+            area.admin_level = admin_level(relation.tags());
+            return;
+        }
+
+        AdministrativeArea area;
+        area.id = OsmId{OsmObjectType::relation, relation.id()};
+        area.name = data_.strings.intern(selected_name(relation.tags()));
+        area.admin_level = admin_level(relation.tags());
+        relation_indices_.emplace(relation.id(), data_.administrative_areas.size());
+        data_.administrative_areas.push_back(area);
+        ++stats_.extracted_administrative_areas;
+    }
+
+    void area(const osmium::Area& source) {
+        const auto type = source.from_way() ? OsmObjectType::way : OsmObjectType::relation;
+        auto& indices = source.from_way() ? way_indices_ : relation_indices_;
+        const auto existing = indices.find(source.orig_id());
+
+        std::size_t area_index = 0;
+        if (existing == indices.end()) {
+            AdministrativeArea area;
+            area.id = OsmId{type, source.orig_id()};
+            area.name = data_.strings.intern(selected_name(source.tags()));
+            area.admin_level = admin_level(source.tags());
+            area_index = data_.administrative_areas.size();
+            indices.emplace(source.orig_id(), area_index);
+            data_.administrative_areas.push_back(area);
+            ++stats_.extracted_administrative_areas;
+        } else {
+            area_index = existing->second;
+        }
+
+        auto& area = data_.administrative_areas[area_index];
+        if (area.name == kInvalidStringId) {
+            area.name = data_.strings.intern(selected_name(source.tags()));
+        }
+        if (area.admin_level < 0) {
+            area.admin_level = admin_level(source.tags());
+        }
+
+        const auto rings_begin = data_.administrative_rings.size();
+        bool has_bounds = false;
+        BoundingBox bounds{};
+        std::uint32_t outer_count = 0;
+        std::uint32_t inner_count = 0;
+
+        for (const auto& outer : source.outer_rings()) {
+            if (!append_ring(outer, false, bounds, has_bounds)) {
+                continue;
+            }
+            ++outer_count;
+            for (const auto& inner : source.inner_rings(outer)) {
+                if (append_ring(inner, true, bounds, has_bounds)) {
+                    ++inner_count;
+                }
+            }
+        }
+
+        if (outer_count == 0 || !has_bounds) {
+            return;
+        }
+        if (rings_begin > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()) ||
+            data_.administrative_rings.size() - rings_begin >
+                static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
+            throw std::runtime_error{"Administrative rings exceed 32-bit offsets"};
+        }
+
+        area.bounds = bounds;
+        area.rings_begin = static_cast<std::uint32_t>(rings_begin);
+        area.rings_count = static_cast<std::uint32_t>(
+            data_.administrative_rings.size() - rings_begin);
+        area.outer_ring_count = outer_count;
+        area.inner_ring_count = inner_count;
+        area.has_geometry = true;
+        stats_.administrative_outer_rings += outer_count;
+        stats_.administrative_inner_rings += inner_count;
+    }
+
+private:
+    template <typename TRing>
+    bool append_ring(const TRing& source,
+                     const bool is_inner,
+                     BoundingBox& bounds,
+                     bool& has_bounds) {
+        if (data_.administrative_points.size() + source.size() >
+            static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
+            throw std::runtime_error{"Administrative geometry exceeds 32-bit offsets"};
+        }
+
+        const auto points_begin = static_cast<std::uint32_t>(data_.administrative_points.size());
+        for (const auto& node_ref : source) {
+            if (!node_ref.location().valid()) {
+                continue;
+            }
+            const auto point = coordinate_from_degrees(node_ref.location().lat_without_check(),
+                                                       node_ref.location().lon_without_check());
+            data_.administrative_points.push_back(point);
+            if (!is_inner) {
+                if (!has_bounds) {
+                    bounds = BoundingBox{.minimum = point, .maximum = point};
+                    has_bounds = true;
+                } else {
+                    extend_bounds(bounds, point);
+                }
+            }
+        }
+
+        const auto points_count = data_.administrative_points.size() - points_begin;
+        if (points_count < 4) {
+            data_.administrative_points.resize(points_begin);
+            return false;
+        }
+        data_.administrative_rings.push_back(AdministrativeRing{
+            .points_begin = points_begin,
+            .points_count = static_cast<std::uint32_t>(points_count),
+            .is_inner = is_inner,
+        });
+        return true;
+    }
+
+    DataStore& data_;
+    ExtractionStats& stats_;
+    std::unordered_map<std::int64_t, std::size_t> way_indices_;
+    std::unordered_map<std::int64_t, std::size_t> relation_indices_;
+};
+
+class AreaHandler final : public osmium::handler::Handler {
+public:
+    explicit AreaHandler(AdministrativeAreaStore& areas) : areas_(areas) {}
+
+    void area(const osmium::Area& area) {
+        areas_.area(area);
+    }
+
+private:
+    AdministrativeAreaStore& areas_;
+};
+
 class ExtractionHandler final : public osmium::handler::Handler {
 public:
-    ExtractionHandler(DataStore& data, ExtractionStats& stats) : data_(data), stats_(stats) {}
+    ExtractionHandler(DataStore& data,
+                      ExtractionStats& stats,
+                      AdministrativeAreaStore& administrative_areas)
+        : data_(data), stats_(stats), administrative_areas_(administrative_areas) {}
 
     void node(const osmium::Node& node) {
         ++stats_.processed_nodes;
@@ -172,8 +338,7 @@ public:
         const auto& tags = way.tags();
         const bool is_building = tags.has_key("building");
         const bool is_street = tags.has_key("highway");
-        const bool is_administrative = tags.has_tag("boundary", "administrative");
-        if (!is_building && !is_street && !is_administrative) {
+        if (!is_building && !is_street) {
             return;
         }
 
@@ -216,25 +381,6 @@ public:
             ++stats_.extracted_streets;
         }
 
-        if (is_administrative && points.size() >= 3) {
-            if (data_.administrative_points.size() + points.size() >
-                static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
-                throw std::runtime_error{"Administrative geometry exceeds 32-bit offsets"};
-            }
-            AdministrativeArea area;
-            area.id = OsmId{OsmObjectType::way, way.id()};
-            area.name = data_.strings.intern(selected_name(tags));
-            area.admin_level = admin_level(tags);
-            area.bounds = bounds_for(points);
-            area.points_begin = static_cast<std::uint32_t>(data_.administrative_points.size());
-            area.points_count = static_cast<std::uint32_t>(points.size());
-            area.has_geometry = true;
-            data_.administrative_points.insert(data_.administrative_points.end(),
-                                               points.begin(),
-                                               points.end());
-            data_.administrative_areas.push_back(area);
-            ++stats_.extracted_administrative_areas;
-        }
     }
 
     void relation(const osmium::Relation& relation) {
@@ -249,12 +395,7 @@ public:
         }
 
         if (tags.has_tag("boundary", "administrative")) {
-            AdministrativeArea area;
-            area.id = OsmId{OsmObjectType::relation, relation.id()};
-            area.name = data_.strings.intern(selected_name(tags));
-            area.admin_level = admin_level(tags);
-            data_.administrative_areas.push_back(area);
-            ++stats_.extracted_administrative_areas;
+            administrative_areas_.add_relation_metadata(relation);
         }
     }
 
@@ -281,6 +422,7 @@ private:
 
     DataStore& data_;
     ExtractionStats& stats_;
+    AdministrativeAreaStore& administrative_areas_;
 };
 
 } // namespace
@@ -298,12 +440,43 @@ ExtractionResult extract_pbf(const std::filesystem::path& input_path) {
     NodeIndex node_index;
     osmium::handler::NodeLocationsForWays<NodeIndex> location_handler{node_index};
     location_handler.ignore_errors();
-    ExtractionHandler extraction_handler{result.data, result.stats};
+    AdministrativeAreaStore administrative_areas{result.data, result.stats};
+    ExtractionHandler extraction_handler{result.data, result.stats, administrative_areas};
+
+    osmium::area::Assembler::config_type assembler_config;
+    assembler_config.create_empty_areas = true;
+    assembler_config.ignore_invalid_locations = false;
+    osmium::TagsFilter administrative_filter{false};
+    administrative_filter.add_rule(true, "boundary", "administrative");
+    osmium::area::MultipolygonManager<osmium::area::Assembler> multipolygon_manager{
+        assembler_config,
+        std::move(administrative_filter),
+    };
+
+    const osmium::io::File input_file{input_path.string()};
 
     const auto started = std::chrono::steady_clock::now();
-    osmium::io::Reader reader{input_path.string(), osmium::osm_entity_bits::all};
-    osmium::apply(reader, location_handler, extraction_handler);
+    osmium::relations::read_relations(input_file, multipolygon_manager);
+
+    AreaHandler area_handler{administrative_areas};
+    auto& multipolygon_handler = multipolygon_manager.handler(
+        [&](osmium::memory::Buffer&& buffer) {
+            osmium::apply(buffer, area_handler);
+        });
+
+    osmium::io::Reader reader{input_file, osmium::osm_entity_bits::all};
+    osmium::apply(reader, location_handler, extraction_handler, multipolygon_handler);
     reader.close();
+
+    multipolygon_manager.for_each_incomplete_relation([&](const auto&) {
+        ++result.stats.incomplete_administrative_relations;
+    });
+    result.stats.open_administrative_rings = multipolygon_manager.stats().open_rings;
+    result.stats.administrative_areas_without_geometry =
+        static_cast<std::uint64_t>(std::count_if(
+            result.data.administrative_areas.begin(),
+            result.data.administrative_areas.end(),
+            [](const AdministrativeArea& area) { return !area.has_geometry; }));
 
     result.stats.elapsed_seconds = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - started).count();
@@ -326,6 +499,13 @@ void print_extraction_report(const std::filesystem::path& input_path,
               << "Extracted buildings/address points: " << stats.extracted_buildings << '\n'
               << "Extracted streets: " << stats.extracted_streets << '\n'
               << "Extracted administrative areas: " << stats.extracted_administrative_areas << '\n'
+              << "Administrative outer rings: " << stats.administrative_outer_rings << '\n'
+              << "Administrative inner rings: " << stats.administrative_inner_rings << '\n'
+              << "Administrative areas without geometry: "
+              << stats.administrative_areas_without_geometry << '\n'
+              << "Incomplete administrative relations: "
+              << stats.incomplete_administrative_relations << '\n'
+              << "Open administrative rings: " << stats.open_administrative_rings << '\n'
               << "Buildings without names: " << stats.buildings_without_names << '\n'
               << "Buildings without representative points: " << stats.buildings_without_points << '\n'
               << "Invalid way-node locations: " << stats.invalid_way_node_locations << '\n'

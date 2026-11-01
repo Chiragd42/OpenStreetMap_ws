@@ -63,5 +63,11 @@ name index.
 
 The binary cache and map frontend are deliberately not part of this checkpoint.
 
+Administrative boundary relations are assembled with libosmium's multipolygon
+assembler. Outer and inner rings are retained in flat point/ring arrays, and
+incomplete relations remain visible in the statistics instead of being silently
+dropped. The representation and verification are documented in
+[`docs/checkpoint-07-administrative-areas.md`](docs/checkpoint-07-administrative-areas.md).
+
 The measured Germany results and their storage implications are documented in
 [`docs/checkpoint-02-osm-inspection.md`](docs/checkpoint-02-osm-inspection.md).

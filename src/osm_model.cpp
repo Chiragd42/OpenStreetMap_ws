@@ -49,6 +49,7 @@ std::size_t DataStore::estimated_bytes() const noexcept {
            streets.capacity() * sizeof(Street) +
            administrative_areas.capacity() * sizeof(AdministrativeArea) +
            street_points.capacity() * sizeof(Coordinate) +
+           administrative_rings.capacity() * sizeof(AdministrativeRing) +
            administrative_points.capacity() * sizeof(Coordinate);
 }
 

@@ -69,13 +69,21 @@ struct Street {
     std::uint32_t points_count{0};
 };
 
+struct AdministrativeRing {
+    std::uint32_t points_begin{0};
+    std::uint32_t points_count{0};
+    bool is_inner{false};
+};
+
 struct AdministrativeArea {
     OsmId id{};
     BoundingBox bounds{};
     StringId name{kInvalidStringId};
     std::int16_t admin_level{-1};
-    std::uint32_t points_begin{0};
-    std::uint32_t points_count{0};
+    std::uint32_t rings_begin{0};
+    std::uint32_t rings_count{0};
+    std::uint32_t outer_ring_count{0};
+    std::uint32_t inner_ring_count{0};
     bool has_geometry{false};
 };
 
@@ -85,6 +93,7 @@ struct DataStore {
     std::vector<Street> streets;
     std::vector<AdministrativeArea> administrative_areas;
     std::vector<Coordinate> street_points;
+    std::vector<AdministrativeRing> administrative_rings;
     std::vector<Coordinate> administrative_points;
 
     [[nodiscard]] std::size_t estimated_bytes() const noexcept;

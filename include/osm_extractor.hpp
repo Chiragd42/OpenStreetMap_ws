@@ -14,6 +14,11 @@ struct ExtractionStats {
     std::uint64_t extracted_buildings{0};
     std::uint64_t extracted_streets{0};
     std::uint64_t extracted_administrative_areas{0};
+    std::uint64_t administrative_outer_rings{0};
+    std::uint64_t administrative_inner_rings{0};
+    std::uint64_t administrative_areas_without_geometry{0};
+    std::uint64_t incomplete_administrative_relations{0};
+    std::uint64_t open_administrative_rings{0};
     std::uint64_t buildings_without_names{0};
     std::uint64_t buildings_without_points{0};
     std::uint64_t invalid_way_node_locations{0};

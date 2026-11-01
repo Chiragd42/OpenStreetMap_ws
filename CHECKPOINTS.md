@@ -29,7 +29,7 @@ Status legend:
 
 ### 3. Define the extracted object data structures
 
-- Status: `[ ]`
+- Status: `[x]`
 - Intention: Decide which IDs, names, address fields, geometry, and offsets are
   required for buildings, streets, and administrative areas.
 - Verification: Review the structures for correctness, memory use, and the
@@ -37,14 +37,14 @@ Status legend:
 
 ### 4. Parse nodes and resolve way-node coordinates
 
-- Status: `[ ]`
+- Status: `[x]`
 - Intention: Use libosmium to parse the PBF and map node references in ways to
   geographic coordinates.
 - Verification: Resolve and inspect known way geometries from a small extract.
 
 ### 5. Extract every required building
 
-- Status: `[ ]`
+- Status: `[~]`
 - Intention: Extract all relevant `building=*` objects, including buildings
   without address attributes, preserve typed OSM IDs, and calculate a
   representative point.
@@ -52,14 +52,14 @@ Status legend:
 
 ### 6. Extract original street segments
 
-- Status: `[ ]`
+- Status: `[~]`
 - Intention: Extract relevant `highway=*` ways with original IDs, selected
   names, road classes, bounding boxes, and geometry before optional merging.
 - Verification: Inspect named and unnamed streets and their original way IDs.
 
 ### 7. Extract administrative areas
 
-- Status: `[ ]`
+- Status: `[x]`
 - Intention: Extract administrative ways and relations with names, IDs,
   levels, outer rings, and inner rings.
 - Verification: Validate representative German boundaries and report
@@ -67,14 +67,14 @@ Status legend:
 
 ### 8. Apply one consistent language policy
 
-- Status: `[ ]`
+- Status: `[x]`
 - Intention: Use one shared rule for selecting a German object name, with a
   documented fallback when `name:de` is unavailable.
 - Verification: Apply the same function to every extracted object type.
 
 ### 9. Implement the linear `--basicTest` mode
 
-- Status: `[ ]`
+- Status: `[x]`
 - Intention: Read queries from a file, linearly scan all original extracted
   object names, and write matching typed OSM IDs to an output file.
 - Verification: Test substring matches, no matches, empty input, multiple
@@ -82,7 +82,7 @@ Status legend:
 
 ### 10. Record timings, counts, and memory statistics
 
-- Status: `[ ]`
+- Status: `[~]`
 - Intention: Report processing time, object counts, skipped objects, cache
   timings, and meaningful memory measurements.
 - Verification: Produce a concise statistics report for a complete run.

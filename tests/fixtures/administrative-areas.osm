@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="sheet1-test">
+  <node id="1" lat="48.0000" lon="9.0000"/>
+  <node id="2" lat="48.0000" lon="9.0100"/>
+  <node id="3" lat="48.0100" lon="9.0100"/>
+  <node id="4" lat="48.0100" lon="9.0000"/>
+
+  <node id="5" lat="48.0030" lon="9.0030"/>
+  <node id="6" lat="48.0030" lon="9.0070"/>
+  <node id="7" lat="48.0070" lon="9.0070"/>
+  <node id="8" lat="48.0070" lon="9.0030"/>
+
+  <node id="20" lat="49.0000" lon="10.0000"/>
+  <node id="21" lat="49.0000" lon="10.0100"/>
+  <node id="22" lat="49.0100" lon="10.0100"/>
+  <node id="23" lat="49.0100" lon="10.0000"/>
+
+  <way id="100">
+    <nd ref="1"/><nd ref="2"/><nd ref="3"/>
+  </way>
+  <way id="101">
+    <nd ref="3"/><nd ref="4"/><nd ref="1"/>
+  </way>
+  <way id="102">
+    <nd ref="5"/><nd ref="6"/><nd ref="7"/><nd ref="8"/><nd ref="5"/>
+  </way>
+
+  <way id="300">
+    <nd ref="20"/><nd ref="21"/><nd ref="22"/><nd ref="23"/><nd ref="20"/>
+    <tag k="boundary" v="administrative"/>
+    <tag k="admin_level" v="6"/>
+    <tag k="name:de" v="Eigenständiger Bezirk"/>
+  </way>
+
+  <relation id="200">
+    <member type="way" ref="100" role="outer"/>
+    <member type="way" ref="101" role="outer"/>
+    <member type="way" ref="102" role="inner"/>
+    <tag k="type" v="boundary"/>
+    <tag k="boundary" v="administrative"/>
+    <tag k="admin_level" v="8"/>
+    <tag k="name" v="Test District"/>
+    <tag k="name:de" v="Testbezirk"/>
+  </relation>
+
+  <relation id="201">
+    <member type="way" ref="999" role="outer"/>
+    <tag k="type" v="boundary"/>
+    <tag k="boundary" v="administrative"/>
+    <tag k="admin_level" v="8"/>
+    <tag k="name" v="Unvollständig"/>
+  </relation>
+</osm>

@@ -82,6 +82,11 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 
 if(BUILD_TESTING)
+    add_executable(test_administrative_areas
+        tests/test_administrative_areas.cpp
+    )
+    target_link_libraries(test_administrative_areas PRIVATE osm_sheet1_core)
+
     add_test(
         NAME inspect_fixture
         COMMAND ${CMAKE_COMMAND}
@@ -98,5 +103,11 @@ if(BUILD_TESTING)
             -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/tests/basic-test-input.txt
             -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/basic-test-output.txt
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/assert_basic_test.cmake
+    )
+
+    add_test(
+        NAME administrative_area_fixture
+        COMMAND test_administrative_areas
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/administrative-areas.osm
     )
 endif()
