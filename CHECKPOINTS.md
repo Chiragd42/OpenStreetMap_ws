@@ -44,7 +44,7 @@ Status legend:
 
 ### 5. Extract every required building
 
-- Status: `[~]`
+- Status: `[x]`
 - Intention: Extract all relevant `building=*` objects, including buildings
   without address attributes, preserve typed OSM IDs, and calculate a
   representative point.

@@ -87,6 +87,11 @@ if(BUILD_TESTING)
     )
     target_link_libraries(test_administrative_areas PRIVATE osm_sheet1_core)
 
+    add_executable(test_building_relations
+        tests/test_building_relations.cpp
+    )
+    target_link_libraries(test_building_relations PRIVATE osm_sheet1_core)
+
     add_test(
         NAME inspect_fixture
         COMMAND ${CMAKE_COMMAND}
@@ -109,5 +114,11 @@ if(BUILD_TESTING)
         NAME administrative_area_fixture
         COMMAND test_administrative_areas
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/administrative-areas.osm
+    )
+
+    add_test(
+        NAME building_relation_fixture
+        COMMAND test_building_relations
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/building-relations.osm
     )
 endif()

@@ -13,6 +13,7 @@
 #include <osmium/osm/relation.hpp>
 #include <osmium/osm/way.hpp>
 #include <osmium/relations/manager_util.hpp>
+#include <osmium/relations/relations_manager.hpp>
 #include <osmium/tags/tags_filter.hpp>
 #include <osmium/visitor.hpp>
 
@@ -123,6 +124,22 @@ void extend_bounds(BoundingBox& bounds, const Coordinate point) {
                                    longitude_sum / (3.0 * twice_area));
 }
 
+[[nodiscard]] long double absolute_twice_area(const std::vector<Coordinate>& points) {
+    if (points.size() < 4) {
+        return 0.0L;
+    }
+
+    long double twice_area = 0.0L;
+    for (std::size_t i = 0; i + 1 < points.size(); ++i) {
+        const auto x0 = static_cast<long double>(points[i].longitude_e7);
+        const auto y0 = static_cast<long double>(points[i].latitude_e7);
+        const auto x1 = static_cast<long double>(points[i + 1].longitude_e7);
+        const auto y1 = static_cast<long double>(points[i + 1].latitude_e7);
+        twice_area += x0 * y1 - x1 * y0;
+    }
+    return std::abs(twice_area);
+}
+
 [[nodiscard]] std::int16_t admin_level(const osmium::TagList& tags) {
     const auto raw = tag(tags, "admin_level");
     if (raw.empty()) {
@@ -161,6 +178,185 @@ void extend_bounds(BoundingBox& bounds, const Coordinate point) {
     const auto microseconds = static_cast<double>(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec);
     return seconds + microseconds / 1'000'000.0;
 }
+
+class BuildingStore {
+public:
+    BuildingStore(DataStore& data, ExtractionStats& stats)
+        : data_(data), stats_(stats) {}
+
+    void add(Building building) {
+        data_.buildings.push_back(std::move(building));
+        ++stats_.extracted_buildings;
+    }
+
+    void add_relation_metadata(const osmium::Relation& relation) {
+        auto& building = find_or_create_relation(relation.id());
+        fill_tags(building, relation.tags());
+    }
+
+    void area(const osmium::Area& source) {
+        if (source.from_way() || !source.tags().has_key("building")) {
+            return;
+        }
+
+        auto& building = find_or_create_relation(source.orig_id());
+        fill_tags(building, source.tags());
+
+        std::vector<Coordinate> largest_outer_ring;
+        long double largest_area = 0.0L;
+        for (const auto& outer : source.outer_rings()) {
+            std::vector<Coordinate> points;
+            points.reserve(outer.size());
+            for (const auto& node_ref : outer) {
+                if (!node_ref.location().valid()) {
+                    continue;
+                }
+                points.push_back(coordinate_from_degrees(
+                    node_ref.location().lat_without_check(),
+                    node_ref.location().lon_without_check()));
+            }
+
+            const auto ring_area = absolute_twice_area(points);
+            if (ring_area > largest_area) {
+                largest_area = ring_area;
+                largest_outer_ring = std::move(points);
+            }
+        }
+
+        if (!largest_outer_ring.empty()) {
+            building.point = representative_point(largest_outer_ring);
+            building.has_point = true;
+        }
+    }
+
+    void complete_relation(const osmium::Relation& relation,
+                           const std::vector<const osmium::Way*>& ways) {
+        auto& building = find_or_create_relation(relation.id());
+        fill_tags(building, relation.tags());
+
+        std::vector<Coordinate> largest_closed_way;
+        std::vector<Coordinate> all_points;
+        long double largest_area = 0.0L;
+        for (const auto* way : ways) {
+            std::vector<Coordinate> points;
+            points.reserve(way->nodes().size());
+            for (const auto& node_ref : way->nodes()) {
+                if (!node_ref.location().valid()) {
+                    continue;
+                }
+                const auto point = coordinate_from_degrees(
+                    node_ref.location().lat_without_check(),
+                    node_ref.location().lon_without_check());
+                points.push_back(point);
+                all_points.push_back(point);
+            }
+
+            const bool is_closed = points.size() >= 4 &&
+                                   points.front().latitude_e7 == points.back().latitude_e7 &&
+                                   points.front().longitude_e7 == points.back().longitude_e7;
+            const auto way_area = is_closed ? absolute_twice_area(points) : 0.0L;
+            if (way_area > largest_area) {
+                largest_area = way_area;
+                largest_closed_way = std::move(points);
+            }
+        }
+
+        if (!largest_closed_way.empty()) {
+            building.point = representative_point(largest_closed_way);
+            building.has_point = true;
+        } else if (!all_points.empty()) {
+            // Split multipolygon members are not closed individually. This fallback is
+            // replaced by the assembled-area centroid when assembly succeeds.
+            building.point = bounds_center(bounds_for(all_points));
+            building.has_point = true;
+        }
+    }
+
+private:
+    Building& find_or_create_relation(const std::int64_t id) {
+        const auto existing = relation_indices_.find(id);
+        if (existing != relation_indices_.end()) {
+            return data_.buildings[existing->second];
+        }
+
+        Building building;
+        building.id = OsmId{OsmObjectType::relation, id};
+        const auto index = data_.buildings.size();
+        relation_indices_.emplace(id, index);
+        data_.buildings.push_back(building);
+        ++stats_.extracted_buildings;
+        return data_.buildings.back();
+    }
+
+    void fill_tags(Building& building, const osmium::TagList& tags) {
+        building.name = data_.strings.intern(selected_name(tags));
+        building.building_type = data_.strings.intern(tag(tags, "building"));
+        building.street = data_.strings.intern(tag(tags, "addr:street"));
+        building.house_number = data_.strings.intern(tag(tags, "addr:housenumber"));
+        building.postcode = data_.strings.intern(tag(tags, "addr:postcode"));
+        building.city = data_.strings.intern(tag(tags, "addr:city"));
+    }
+
+    DataStore& data_;
+    ExtractionStats& stats_;
+    std::unordered_map<std::int64_t, std::size_t> relation_indices_;
+};
+
+class BuildingRelationManager final
+    : public osmium::relations::RelationsManager<BuildingRelationManager, false, true, false> {
+public:
+    BuildingRelationManager(const osmium::area::Assembler::config_type& config,
+                            BuildingStore& buildings)
+        : assembler_config_(config), buildings_(buildings) {}
+
+    [[nodiscard]] bool new_relation(const osmium::Relation& relation) const {
+        if (!relation.tags().has_key("building")) {
+            return false;
+        }
+        return std::any_of(relation.members().cbegin(), relation.members().cend(),
+                           [](const osmium::RelationMember& member) {
+                               return member.type() == osmium::item_type::way;
+                           });
+    }
+
+    [[nodiscard]] bool new_member(const osmium::Relation&,
+                                  const osmium::RelationMember& member,
+                                  const std::size_t) const noexcept {
+        return member.type() == osmium::item_type::way;
+    }
+
+    void complete_relation(const osmium::Relation& relation) {
+        std::vector<const osmium::Way*> ways;
+        ways.reserve(relation.members().size());
+        for (const auto& member : relation.members()) {
+            if (member.type() != osmium::item_type::way || member.ref() == 0) {
+                continue;
+            }
+            const auto* way = get_member_way(member.ref());
+            if (way != nullptr) {
+                ways.push_back(way);
+            }
+        }
+
+        buildings_.complete_relation(relation, ways);
+
+        if (!relation.tags().has_tag("type", "multipolygon") &&
+            !relation.tags().has_tag("type", "boundary")) {
+            return;
+        }
+
+        try {
+            osmium::area::Assembler assembler{assembler_config_};
+            assembler(relation, ways, buffer());
+        } catch (const osmium::invalid_location&) {
+            // The relation is retained without a point and reported in the final statistics.
+        }
+    }
+
+private:
+    osmium::area::Assembler::config_type assembler_config_;
+    BuildingStore& buildings_;
+};
 
 class AdministrativeAreaStore {
 public:
@@ -298,9 +494,9 @@ private:
     std::unordered_map<std::int64_t, std::size_t> relation_indices_;
 };
 
-class AreaHandler final : public osmium::handler::Handler {
+class AdministrativeAreaHandler final : public osmium::handler::Handler {
 public:
-    explicit AreaHandler(AdministrativeAreaStore& areas) : areas_(areas) {}
+    explicit AdministrativeAreaHandler(AdministrativeAreaStore& areas) : areas_(areas) {}
 
     void area(const osmium::Area& area) {
         areas_.area(area);
@@ -310,12 +506,28 @@ private:
     AdministrativeAreaStore& areas_;
 };
 
+class BuildingAreaHandler final : public osmium::handler::Handler {
+public:
+    explicit BuildingAreaHandler(BuildingStore& buildings) : buildings_(buildings) {}
+
+    void area(const osmium::Area& area) {
+        buildings_.area(area);
+    }
+
+private:
+    BuildingStore& buildings_;
+};
+
 class ExtractionHandler final : public osmium::handler::Handler {
 public:
     ExtractionHandler(DataStore& data,
                       ExtractionStats& stats,
+                      BuildingStore& buildings,
                       AdministrativeAreaStore& administrative_areas)
-        : data_(data), stats_(stats), administrative_areas_(administrative_areas) {}
+        : data_(data),
+          stats_(stats),
+          buildings_(buildings),
+          administrative_areas_(administrative_areas) {}
 
     void node(const osmium::Node& node) {
         ++stats_.processed_nodes;
@@ -330,7 +542,7 @@ public:
                                                  node.location().lon_without_check());
         building.has_point = true;
         fill_building_tags(building, tags);
-        add_building(std::move(building));
+        buildings_.add(std::move(building));
     }
 
     void way(const osmium::Way& way) {
@@ -361,7 +573,7 @@ public:
                 building.has_point = true;
             }
             fill_building_tags(building, tags);
-            add_building(std::move(building));
+            buildings_.add(std::move(building));
         }
 
         if (is_street && points.size() >= 2) {
@@ -388,10 +600,7 @@ public:
         const auto& tags = relation.tags();
 
         if (tags.has_key("building")) {
-            Building building;
-            building.id = OsmId{OsmObjectType::relation, relation.id()};
-            fill_building_tags(building, tags);
-            add_building(std::move(building));
+            buildings_.add_relation_metadata(relation);
         }
 
         if (tags.has_tag("boundary", "administrative")) {
@@ -409,19 +618,9 @@ private:
         building.city = data_.strings.intern(tag(tags, "addr:city"));
     }
 
-    void add_building(Building building) {
-        if (building.name == kInvalidStringId) {
-            ++stats_.buildings_without_names;
-        }
-        if (!building.has_point) {
-            ++stats_.buildings_without_points;
-        }
-        data_.buildings.push_back(std::move(building));
-        ++stats_.extracted_buildings;
-    }
-
     DataStore& data_;
     ExtractionStats& stats_;
+    BuildingStore& buildings_;
     AdministrativeAreaStore& administrative_areas_;
 };
 
@@ -440,8 +639,14 @@ ExtractionResult extract_pbf(const std::filesystem::path& input_path) {
     NodeIndex node_index;
     osmium::handler::NodeLocationsForWays<NodeIndex> location_handler{node_index};
     location_handler.ignore_errors();
+    BuildingStore buildings{result.data, result.stats};
     AdministrativeAreaStore administrative_areas{result.data, result.stats};
-    ExtractionHandler extraction_handler{result.data, result.stats, administrative_areas};
+    ExtractionHandler extraction_handler{
+        result.data,
+        result.stats,
+        buildings,
+        administrative_areas,
+    };
 
     osmium::area::Assembler::config_type assembler_config;
     assembler_config.create_empty_areas = true;
@@ -452,20 +657,33 @@ ExtractionResult extract_pbf(const std::filesystem::path& input_path) {
         assembler_config,
         std::move(administrative_filter),
     };
+    BuildingRelationManager building_relation_manager{assembler_config, buildings};
 
     const osmium::io::File input_file{input_path.string()};
 
     const auto started = std::chrono::steady_clock::now();
-    osmium::relations::read_relations(input_file, multipolygon_manager);
+    osmium::relations::read_relations(
+        input_file,
+        multipolygon_manager,
+        building_relation_manager);
 
-    AreaHandler area_handler{administrative_areas};
+    AdministrativeAreaHandler area_handler{administrative_areas};
     auto& multipolygon_handler = multipolygon_manager.handler(
         [&](osmium::memory::Buffer&& buffer) {
             osmium::apply(buffer, area_handler);
         });
+    BuildingAreaHandler building_area_handler{buildings};
+    auto& building_relation_handler = building_relation_manager.handler(
+        [&](osmium::memory::Buffer&& buffer) {
+            osmium::apply(buffer, building_area_handler);
+        });
 
     osmium::io::Reader reader{input_file, osmium::osm_entity_bits::all};
-    osmium::apply(reader, location_handler, extraction_handler, multipolygon_handler);
+    osmium::apply(reader,
+                  location_handler,
+                  extraction_handler,
+                  multipolygon_handler,
+                  building_relation_handler);
     reader.close();
 
     multipolygon_manager.for_each_incomplete_relation([&](const auto&) {
@@ -477,6 +695,14 @@ ExtractionResult extract_pbf(const std::filesystem::path& input_path) {
             result.data.administrative_areas.begin(),
             result.data.administrative_areas.end(),
             [](const AdministrativeArea& area) { return !area.has_geometry; }));
+    result.stats.buildings_without_names = static_cast<std::uint64_t>(std::count_if(
+        result.data.buildings.begin(),
+        result.data.buildings.end(),
+        [](const Building& building) { return building.name == kInvalidStringId; }));
+    result.stats.buildings_without_points = static_cast<std::uint64_t>(std::count_if(
+        result.data.buildings.begin(),
+        result.data.buildings.end(),
+        [](const Building& building) { return !building.has_point; }));
 
     result.stats.elapsed_seconds = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - started).count();
