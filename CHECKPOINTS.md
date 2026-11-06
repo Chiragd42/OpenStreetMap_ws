@@ -52,7 +52,7 @@ Status legend:
 
 ### 6. Extract original street segments
 
-- Status: `[~]`
+- Status: `[x]`
 - Intention: Extract relevant `highway=*` ways with original IDs, selected
   names, road classes, bounding boxes, and geometry before optional merging.
 - Verification: Inspect named and unnamed streets and their original way IDs.
