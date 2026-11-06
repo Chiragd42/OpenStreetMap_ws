@@ -1,9 +1,12 @@
 #include "basic_test.hpp"
+#include "http_server.hpp"
 #include "osm_extractor.hpp"
 
+#include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <string_view>
 
@@ -14,12 +17,35 @@ struct Options {
     std::filesystem::path basic_test_input;
     std::filesystem::path basic_test_output;
     bool run_basic_test{false};
+    bool serve{false};
+    std::uint16_t port{8080};
+    std::size_t max_requests{0};
 };
 
 void print_usage() {
     std::cout << "Usage:\n"
               << "  osm_sheet1 [--pbf <file.osm.pbf>] --basicTest <input_file> <output_file>\n"
-              << "  osm_sheet1 [--pbf <file.osm.pbf>]\n";
+              << "  osm_sheet1 [--pbf <file.osm.pbf>] --serve [--port <port>]\n";
+}
+
+[[nodiscard]] std::uint64_t parse_unsigned(const std::string_view text,
+                                           const std::uint64_t maximum,
+                                           const char* option) {
+    if (text.empty() || text.front() == '-') {
+        throw std::runtime_error{std::string{"Invalid "} + option + ": " +
+                                 std::string{text}};
+    }
+    try {
+        std::size_t parsed = 0;
+        const auto value = std::stoull(std::string{text}, &parsed, 10);
+        if (parsed != text.size() || value > maximum) {
+            throw std::runtime_error{"out of range"};
+        }
+        return value;
+    } catch (...) {
+        throw std::runtime_error{std::string{"Invalid "} + option + ": " +
+                                 std::string{text}};
+    }
 }
 
 [[nodiscard]] Options parse_options(const int argc, char* argv[]) {
@@ -50,6 +76,31 @@ void print_usage() {
             options.run_basic_test = true;
             continue;
         }
+        if (argument == "--serve") {
+            options.serve = true;
+            continue;
+        }
+        if (argument == "--port") {
+            if (i + 1 >= argc) {
+                throw std::runtime_error{"--port requires a number"};
+            }
+            options.port = static_cast<std::uint16_t>(parse_unsigned(
+                argv[++i], std::numeric_limits<std::uint16_t>::max(), "--port"));
+            if (options.port == 0) {
+                throw std::runtime_error{"--port must be greater than zero"};
+            }
+            continue;
+        }
+        if (argument == "--max-requests") {
+            if (i + 1 >= argc) {
+                throw std::runtime_error{"--max-requests requires a number"};
+            }
+            options.max_requests = static_cast<std::size_t>(parse_unsigned(
+                argv[++i],
+                static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max()),
+                "--max-requests"));
+            continue;
+        }
         throw std::runtime_error{"Unknown argument: " + std::string{argument}};
     }
     return options;
@@ -68,6 +119,9 @@ int main(const int argc, char* argv[]) {
                                    options.basic_test_input,
                                    options.basic_test_output);
             std::cout << "Basic-test results written to: " << options.basic_test_output << '\n';
+        }
+        if (options.serve) {
+            return sheet1::run_http_server(result.data, options.port, options.max_requests);
         }
         return 0;
     } catch (const std::exception& error) {

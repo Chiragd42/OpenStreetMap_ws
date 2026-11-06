@@ -33,8 +33,10 @@ add_executable(osm_inspect
 
 add_library(osm_sheet1_core
     src/basic_test.cpp
+    src/http_server.cpp
     src/osm_extractor.cpp
     src/osm_model.cpp
+    src/viewport_query.cpp
 )
 
 add_executable(osm_sheet1

@@ -63,6 +63,29 @@ name index.
 
 The binary cache and map frontend are deliberately not part of this checkpoint.
 
+## Run the viewport backend
+
+The Sheet 1 backend performs the required naive linear scan over building
+representative points and returns at most 10,000 houses from the requested map
+viewport:
+
+```sh
+./build-release/osm_sheet1 \
+  --pbf data/pbf/germany-latest.osm.pbf \
+  --serve --port 8080
+```
+
+Example request:
+
+```text
+http://127.0.0.1:8080/houses?bbox=9.10,48.70,9.25,48.82
+```
+
+The JSON response reports the exact number of matches, the number returned,
+whether the threshold was reached, and the linear scan time. The query logic is
+kept separate from HTTP handling so a spatial index can replace the scan later
+without changing the frontend API.
+
 Administrative boundary relations are assembled with libosmium's multipolygon
 assembler. Outer and inner rings are retained in flat point/ring arrays, and
 incomplete relations remain visible in the statistics instead of being silently

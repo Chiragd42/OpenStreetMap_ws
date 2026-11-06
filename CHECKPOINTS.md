@@ -95,12 +95,14 @@ Status legend:
 - Verification: Confirm equivalent data after cache loading and reject
   incompatible cache versions.
 
-### 12. Build the viewport backend and spatial index
+### 12. Build the viewport backend
 
-- Status: `[ ]`
-- Intention: Retrieve objects inside a map viewport without scanning all of
-  Germany for every request.
-- Verification: Compare indexed results with a linear reference on test data.
+- Status: `[x]`
+- Intention: Use the Sheet 1 reference approach to linearly retrieve building
+  points inside a map viewport, enforce a response threshold, and report query
+  timing. A spatial index can replace the scan later without changing the API.
+- Verification: Query known fixtures through the HTTP endpoint and verify
+  bounding-box filtering, typed IDs, metadata, threshold fields, and errors.
 
 ### 13. Complete the mandatory map visualization
 
