@@ -1,149 +1,104 @@
 (() => {
   "use strict";
 
-  const DEFAULT_BACKEND = "http://127.0.0.1:8080";
-  const DEBOUNCE_MS = 180;
-  const RENDER_BATCH_SIZE = 700;
+  const query = new URLSearchParams(window.location.search);
+  const backendBase = (query.get("backend") || "http://127.0.0.1:8080").replace(/\/$/, "");
+  const minimumHouseZoom = 17;
+  const renderBatchSize = 1000;
+  const maximumCacheEntries = 20;
 
-  const queryParameters = new URLSearchParams(window.location.search);
-  const backendFromQuery = queryParameters.get("backend");
-  const backendBase = (backendFromQuery || DEFAULT_BACKEND).replace(/\/$/, "");
-
-  function finiteQueryNumber(name, fallback) {
-    const rawValue = queryParameters.get(name);
-    if (rawValue === null || rawValue.trim() === "") return fallback;
-    const value = Number(rawValue);
+  function queryNumber(name, fallback) {
+    const raw = query.get(name);
+    if (raw === null || raw.trim() === "") return fallback;
+    const value = Number(raw);
     return Number.isFinite(value) ? value : fallback;
   }
 
-  const initialLatitude = finiteQueryNumber("lat", 48.7758);
-  const initialLongitude = finiteQueryNumber("lon", 9.1829);
-  const initialZoom = Math.min(19, Math.max(3, finiteQueryNumber("zoom", 16)));
-
   const elements = {
-    connectionDot: document.getElementById("connectionDot"),
-    connectionText: document.getElementById("connectionText"),
-    requestNumber: document.getElementById("requestNumber"),
-    returnedCount: document.getElementById("returnedCount"),
-    matchedCount: document.getElementById("matchedCount"),
-    scanTime: document.getElementById("scanTime"),
-    roundTripTime: document.getElementById("roundTripTime"),
-    thresholdNotice: document.getElementById("thresholdNotice"),
-    emptyNotice: document.getElementById("emptyNotice"),
-    errorNotice: document.getElementById("errorNotice"),
-    errorText: document.getElementById("errorText"),
-    zoomReadout: document.getElementById("zoomReadout"),
-    houseToggle: document.getElementById("houseToggle"),
-    refreshButton: document.getElementById("refreshButton"),
-    backendAddress: document.getElementById("backendAddress"),
+    count: document.getElementById("houseCount"),
+    zoom: document.getElementById("zoomValue"),
+    toggle: document.getElementById("showHouses"),
+    status: document.getElementById("status"),
+    threshold: document.getElementById("thresholdWarning"),
+    tileWarning: document.getElementById("tileWarning"),
+    refresh: document.getElementById("refreshButton"),
+    backend: document.getElementById("backendAddress"),
   };
 
-  elements.backendAddress.textContent = backendBase.replace(/^https?:\/\//, "");
+  elements.backend.textContent = backendBase.replace(/^https?:\/\//, "");
 
-  const canvasRenderer = L.canvas({ padding: 0.45, tolerance: 5 });
+  const renderer = L.canvas({ padding: 0.4, tolerance: 6 });
   const map = L.map("map", {
-    center: [initialLatitude, initialLongitude],
-    zoom: initialZoom,
-    zoomControl: false,
+    center: [queryNumber("lat", 48.7758), queryNumber("lon", 9.1829)],
+    zoom: Math.max(3, Math.min(19, queryNumber("zoom", 18))),
     preferCanvas: true,
-    renderer: canvasRenderer,
+    renderer,
   });
 
-  L.control.zoom({ position: "bottomright" }).addTo(map);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
     attribution: "&copy; OpenStreetMap contributors",
-  }).addTo(map);
+    referrerPolicy: "origin",
+  })
+    .on("tileerror", () => { elements.tileWarning.hidden = false; })
+    .addTo(map);
 
-  const houseLayer = L.layerGroup().addTo(map);
+  const housesLayer = L.layerGroup().addTo(map);
+  const viewportCache = new Map();
   let activeRequest = null;
-  let debounceTimer = null;
-  let requestSequence = 0;
-  let renderSequence = 0;
+  let refreshTimer = null;
+  let requestNumber = 0;
+  let renderNumber = 0;
+
+  function setStatus(message, state = "") {
+    elements.status.textContent = message;
+    elements.status.dataset.state = state;
+  }
 
   function formatCount(value) {
     return Number(value || 0).toLocaleString("de-DE");
   }
 
-  function setConnection(state, label) {
-    elements.connectionDot.dataset.state = state;
-    elements.connectionText.textContent = label;
+  function addressText(house) {
+    const street = [house.street, house.house_number].filter(Boolean).join(" ");
+    const city = [house.postcode, house.city].filter(Boolean).join(" ");
+    return [street, city].filter(Boolean).join(", ");
   }
 
-  function setLoading(loading) {
-    elements.refreshButton.disabled = loading;
-    if (loading) {
-      elements.refreshButton.innerHTML = '<span aria-hidden="true">···</span> Querying';
-    } else {
-      elements.refreshButton.innerHTML = '<span aria-hidden="true">↻</span> Refresh viewport';
-    }
-  }
-
-  function resetMessages() {
-    elements.thresholdNotice.hidden = true;
-    elements.emptyNotice.hidden = true;
-    elements.errorNotice.hidden = true;
-  }
-
-  function clearMetrics() {
-    elements.returnedCount.textContent = "—";
-    elements.matchedCount.textContent = "—";
-    elements.scanTime.textContent = "—";
-    elements.roundTripTime.textContent = "—";
-  }
-
-  function addressLabel(house) {
-    const streetLine = [house.street, house.house_number].filter(Boolean).join(" ");
-    const cityLine = [house.postcode, house.city].filter(Boolean).join(" ");
-    return [streetLine, cityLine].filter(Boolean).join(", ");
-  }
-
-  function popupContent(house) {
+  function popupFor(house) {
     const wrapper = document.createElement("div");
-    const id = document.createElement("span");
-    id.className = "house-popup__id";
+    const title = document.createElement("strong");
+    title.textContent = house.name || addressText(house) || house.building || "Building";
+    const details = document.createElement("div");
+    const address = addressText(house);
+    details.textContent = [address, house.building ? `Type: ${house.building}` : ""]
+      .filter(Boolean)
+      .join(" · ") || "No additional information";
+    const id = document.createElement("div");
+    id.className = "popup-id";
     id.textContent = house.id || "OSM object";
-
-    const title = document.createElement("h2");
-    title.className = "house-popup__title";
-    title.textContent = house.name || addressLabel(house) || house.building || "Building";
-
-    const details = document.createElement("p");
-    details.className = "house-popup__meta";
-    const detailParts = [];
-    const address = addressLabel(house);
-    if (address && address !== title.textContent) detailParts.push(address);
-    if (house.building) detailParts.push(`Type: ${house.building}`);
-    details.textContent = detailParts.join(" · ") || "No additional metadata";
-
-    wrapper.append(id, title, details);
+    wrapper.append(title, details, id);
     return wrapper;
   }
 
-  function markerStyle(house) {
-    const addressed = Boolean(house.street || house.house_number || house.postcode || house.city);
-    const zoom = map.getZoom();
-    return {
-      renderer: canvasRenderer,
-      radius: zoom >= 18 ? 4 : zoom >= 16 ? 3.2 : 2.4,
-      color: "#171916",
-      weight: 0.8,
-      fillColor: addressed ? "#c73a24" : "#c49a42",
-      fillOpacity: addressed ? 0.8 : 0.7,
-    };
-  }
-
-  async function renderHouses(houses, localRenderSequence) {
-    houseLayer.clearLayers();
-    for (let begin = 0; begin < houses.length; begin += RENDER_BATCH_SIZE) {
-      if (localRenderSequence !== renderSequence || !elements.houseToggle.checked) return;
-      const end = Math.min(begin + RENDER_BATCH_SIZE, houses.length);
-      for (let index = begin; index < end; index += 1) {
+  async function drawHouses(houses, currentRender) {
+    housesLayer.clearLayers();
+    for (let start = 0; start < houses.length; start += renderBatchSize) {
+      if (currentRender !== renderNumber || !elements.toggle.checked) return;
+      const end = Math.min(start + renderBatchSize, houses.length);
+      for (let index = start; index < end; index += 1) {
         const house = houses[index];
         if (!Number.isFinite(house.lat) || !Number.isFinite(house.lon)) continue;
-        L.circleMarker([house.lat, house.lon], markerStyle(house))
-          .bindPopup(() => popupContent(house), { maxWidth: 280 })
-          .addTo(houseLayer);
+        L.circleMarker([house.lat, house.lon], {
+          renderer,
+          radius: 4,
+          color: "#003f9e",
+          fillColor: "#2a7fff",
+          fillOpacity: 0.82,
+          weight: 1,
+        })
+          .bindPopup(() => popupFor(house), { maxWidth: 280 })
+          .addTo(housesLayer);
       }
       if (end < houses.length) {
         await new Promise((resolve) => window.requestAnimationFrame(resolve));
@@ -151,90 +106,116 @@
     }
   }
 
-  function viewportBbox() {
+  function viewport() {
     const bounds = map.getBounds();
-    return [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()]
-      .map((coordinate) => coordinate.toFixed(7))
-      .join(",");
+    return [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()];
   }
 
-  async function refreshViewport() {
-    window.clearTimeout(debounceTimer);
-    elements.zoomReadout.textContent = `Z${map.getZoom()}`;
+  function cacheKey(coordinates) {
+    return `${map.getZoom()}|${coordinates.map((value) => value.toFixed(4)).join(",")}`;
+  }
 
-    if (!elements.houseToggle.checked) {
-      if (activeRequest) {
-        activeRequest.abort();
-        activeRequest = null;
-      }
-      requestSequence += 1;
-      renderSequence += 1;
-      houseLayer.clearLayers();
-      resetMessages();
-      clearMetrics();
-      setConnection("online", "Houses hidden");
+  function saveCache(key, payload) {
+    if (viewportCache.has(key)) viewportCache.delete(key);
+    viewportCache.set(key, payload);
+    while (viewportCache.size > maximumCacheEntries) {
+      viewportCache.delete(viewportCache.keys().next().value);
+    }
+  }
+
+  async function applyPayload(payload, currentRender, fromCache = false) {
+    const houses = Array.isArray(payload.houses) ? payload.houses : [];
+    elements.count.textContent = `Houses: ${formatCount(payload.returned)}`;
+    elements.threshold.hidden = !payload.threshold_reached;
+    const timing = Number(payload.scan_ms || 0).toFixed(1);
+    setStatus(`Rendering ${formatCount(houses.length)} houses…`, "loading");
+    await drawHouses(houses, currentRender);
+    if (currentRender === renderNumber) {
+      setStatus(`${fromCache ? "Cached viewport" : "Backend online"} · scan ${timing} ms`, "online");
+    }
+  }
+
+  async function refresh(forceNetwork = false) {
+    window.clearTimeout(refreshTimer);
+    elements.zoom.textContent = `Zoom: ${map.getZoom()}`;
+    elements.threshold.hidden = true;
+
+    if (!elements.toggle.checked) {
+      if (activeRequest) activeRequest.abort();
+      activeRequest = null;
+      requestNumber += 1;
+      renderNumber += 1;
+      housesLayer.clearLayers();
+      elements.refresh.disabled = false;
+      elements.count.textContent = "Houses: hidden";
+      setStatus("House layer is switched off.");
+      return;
+    }
+
+    if (map.getZoom() < minimumHouseZoom) {
+      if (activeRequest) activeRequest.abort();
+      activeRequest = null;
+      requestNumber += 1;
+      renderNumber += 1;
+      housesLayer.clearLayers();
+      elements.refresh.disabled = false;
+      elements.count.textContent = "Houses: —";
+      setStatus(`Zoom in to level ${minimumHouseZoom} to load houses.`);
+      return;
+    }
+
+    const coordinates = viewport();
+    const key = cacheKey(coordinates);
+    const currentRender = ++renderNumber;
+    if (!forceNetwork && viewportCache.has(key)) {
+      if (activeRequest) activeRequest.abort();
+      activeRequest = null;
+      requestNumber += 1;
+      elements.refresh.disabled = false;
+      await applyPayload(viewportCache.get(key), currentRender, true);
       return;
     }
 
     if (activeRequest) activeRequest.abort();
     activeRequest = new AbortController();
-    const localRequestSequence = ++requestSequence;
-    const localRenderSequence = ++renderSequence;
+    const currentRequest = ++requestNumber;
+    elements.refresh.disabled = true;
+    setStatus("Loading houses…", "loading");
 
-    resetMessages();
-    setLoading(true);
-    setConnection("loading", "Scanning viewport");
-    elements.requestNumber.textContent = `REQ ${String(localRequestSequence).padStart(3, "0")}`;
-
-    const started = performance.now();
     try {
-      const url = `${backendBase}/houses?bbox=${encodeURIComponent(viewportBbox())}`;
-      const response = await fetch(url, { signal: activeRequest.signal });
+      const bbox = coordinates.map((coordinate) => coordinate.toFixed(7)).join(",");
+      const response = await fetch(`${backendBase}/houses?bbox=${encodeURIComponent(bbox)}`, {
+        signal: activeRequest.signal,
+      });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-      if (localRequestSequence !== requestSequence) return;
-
-      const houses = Array.isArray(payload.houses) ? payload.houses : [];
-      elements.returnedCount.textContent = formatCount(payload.returned);
-      elements.matchedCount.textContent = formatCount(payload.matched);
-      elements.scanTime.textContent = Number(payload.scan_ms || 0).toFixed(1);
-      elements.roundTripTime.textContent = (performance.now() - started).toFixed(0);
-      elements.thresholdNotice.hidden = !payload.threshold_reached;
-      elements.emptyNotice.hidden = houses.length !== 0;
-
-      await renderHouses(houses, localRenderSequence);
-      if (localRequestSequence === requestSequence) {
-        setConnection("online", `Backend online · ${formatCount(houses.length)} drawn`);
-      }
+      if (currentRequest !== requestNumber) return;
+      saveCache(key, payload);
+      await applyPayload(payload, currentRender);
     } catch (error) {
-      if (error.name === "AbortError") return;
-      if (localRequestSequence !== requestSequence) return;
-      renderSequence += 1;
-      houseLayer.clearLayers();
-      elements.errorNotice.hidden = false;
-      elements.errorText.textContent = error.message || "Start the local server and try again.";
-      setConnection("error", "Connection failed");
-      clearMetrics();
+      if (error.name === "AbortError" || currentRequest !== requestNumber) return;
+      renderNumber += 1;
+      housesLayer.clearLayers();
+      elements.count.textContent = "Houses: 0";
+      setStatus(`Backend unavailable: ${error.message}`, "error");
     } finally {
-      if (localRequestSequence === requestSequence) {
-        setLoading(false);
+      if (currentRequest === requestNumber) {
+        elements.refresh.disabled = false;
         activeRequest = null;
       }
     }
   }
 
   function scheduleRefresh() {
-    window.clearTimeout(debounceTimer);
-    debounceTimer = window.setTimeout(refreshViewport, DEBOUNCE_MS);
+    window.clearTimeout(refreshTimer);
+    refreshTimer = window.setTimeout(() => refresh(false), 180);
   }
 
   map.on("moveend", scheduleRefresh);
-  map.on("zoom", () => {
-    elements.zoomReadout.textContent = `Z${map.getZoom()}`;
-  });
-  elements.refreshButton.addEventListener("click", refreshViewport);
-  elements.houseToggle.addEventListener("change", refreshViewport);
+  map.on("zoom", () => { elements.zoom.textContent = `Zoom: ${map.getZoom()}`; });
+  elements.toggle.addEventListener("change", () => refresh(false));
+  elements.refresh.addEventListener("click", () => refresh(true));
 
-  elements.zoomReadout.textContent = `Z${map.getZoom()}`;
-  refreshViewport();
+  elements.zoom.textContent = `Zoom: ${map.getZoom()}`;
+  refresh(false);
 })();
