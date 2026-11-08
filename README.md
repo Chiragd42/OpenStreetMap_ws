@@ -86,6 +86,25 @@ whether the threshold was reached, and the linear scan time. The query logic is
 kept separate from HTTP handling so a spatial index can replace the scan later
 without changing the frontend API.
 
+## Open the map visualization
+
+Keep the viewport backend running, then serve the static frontend from a second
+terminal:
+
+```sh
+python3 -m http.server 5500 --bind 127.0.0.1 --directory frontend
+```
+
+Open `http://127.0.0.1:5500` in a browser. The map starts in Stuttgart and
+requests the visible bounding box from the local backend whenever the view
+changes. Addressed buildings are red, buildings without an address are gold,
+and no more than 10,000 results are drawn for one request. If the limit is
+reached, zoom in to request a smaller area.
+
+The frontend loads Leaflet and OpenStreetMap map tiles from their public web
+services, so the browser needs an internet connection for the base map. The
+extracted building data continues to come only from the local Sheet 1 backend.
+
 Administrative boundary relations are assembled with libosmium's multipolygon
 assembler. Outer and inner rings are retained in flat point/ring arrays, and
 incomplete relations remain visible in the statistics instead of being silently

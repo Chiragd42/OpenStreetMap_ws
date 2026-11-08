@@ -106,11 +106,13 @@ Status legend:
 
 ### 13. Complete the mandatory map visualization
 
-- Status: `[ ]`
+- Status: `[x]`
 - Intention: Display extracted buildings in the current viewport up to a safe
   threshold through a frontend and server backend.
 - Verification: Confirm that addressed and unaddressed buildings appear while
-  panning and zooming.
+  panning and zooming. The browser viewer was also checked against the live
+  fixture backend, including counts and query timing; threshold responses are
+  surfaced as a zoom-in notice.
 
 ## Optional tasks
 

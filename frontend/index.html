@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Sheet 1 viewport viewer for extracted OpenStreetMap buildings in Germany.">
+  <title>Hauskarte — OSM Sheet 1</title>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIINfQ3yn0L4JdY7x2nP7rN5HFlkS+M8s4M="
+    crossorigin=""
+  >
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <div id="map" class="map" aria-label="Interactive map of extracted buildings"></div>
+
+    <aside class="instrument" aria-label="Viewport information">
+      <header class="instrument__header">
+        <div class="sheet-mark" aria-hidden="true">01</div>
+        <div>
+          <p class="eyebrow">OSM field viewer · Germany</p>
+          <h1>Hauskarte</h1>
+          <p class="subtitle">Extracted buildings in the current viewport</p>
+        </div>
+      </header>
+
+      <div class="connection-row" aria-live="polite">
+        <span id="connectionDot" class="connection-dot" aria-hidden="true"></span>
+        <span id="connectionText">Waiting for backend</span>
+        <span id="requestNumber" class="request-number">REQ —</span>
+      </div>
+
+      <section class="metrics" aria-label="Viewport statistics">
+        <article class="metric metric--primary">
+          <span class="metric__label">Displayed</span>
+          <strong id="returnedCount" class="metric__value">—</strong>
+          <span class="metric__unit">houses</span>
+        </article>
+        <article class="metric">
+          <span class="metric__label">Matched</span>
+          <strong id="matchedCount" class="metric__value">—</strong>
+          <span class="metric__unit">in view</span>
+        </article>
+        <article class="metric">
+          <span class="metric__label">Backend</span>
+          <strong id="scanTime" class="metric__value">—</strong>
+          <span class="metric__unit">scan ms</span>
+        </article>
+        <article class="metric">
+          <span class="metric__label">Round trip</span>
+          <strong id="roundTripTime" class="metric__value">—</strong>
+          <span class="metric__unit">total ms</span>
+        </article>
+      </section>
+
+      <div id="thresholdNotice" class="notice" role="status" hidden>
+        <span class="notice__flag" aria-hidden="true">!</span>
+        <p><strong>Display limit reached.</strong> Zoom in to inspect all houses in this area.</p>
+      </div>
+
+      <div id="emptyNotice" class="empty-state" role="status" hidden>
+        No extracted houses were found inside this viewport.
+      </div>
+
+      <div id="errorNotice" class="error-state" role="alert" hidden>
+        <strong>Backend unavailable.</strong>
+        <span id="errorText">Start the local server and try again.</span>
+      </div>
+
+      <section class="legend" aria-label="Map legend">
+        <div class="legend__heading">
+          <span>Map key</span>
+          <span id="zoomReadout">Z—</span>
+        </div>
+        <div class="legend__items">
+          <span><i class="legend-dot legend-dot--addressed"></i> Addressed</span>
+          <span><i class="legend-dot legend-dot--plain"></i> No address</span>
+        </div>
+      </section>
+
+      <footer class="instrument__footer">
+        <label class="layer-toggle">
+          <input id="houseToggle" type="checkbox" checked>
+          <span class="toggle-track" aria-hidden="true"><span></span></span>
+          Show houses
+        </label>
+        <button id="refreshButton" class="refresh-button" type="button">
+          <span aria-hidden="true">↻</span> Refresh viewport
+        </button>
+      </footer>
+
+      <p id="backendAddress" class="backend-address">127.0.0.1:8080</p>
+    </aside>
+
+    <div class="map-caption" aria-hidden="true">
+      <span>MOVE OR ZOOM TO QUERY</span>
+      <i></i>
+      <span>WGS 84</span>
+    </div>
+  </main>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <script src="app.js"></script>
+</body>
+</html>
