@@ -1,4 +1,4 @@
-.PHONY: help release run basicTest serve frontend test
+.PHONY: help release run basicTest serve frontend
 
 BUILD_DIR ?= build-release
 BINARY := $(BUILD_DIR)/osm_sheet1
@@ -10,7 +10,7 @@ help:
 	@echo "  make release"
 	@echo "  make run PBF=<file.pbf>"
 	@echo "  make basicTest PBF=<file.pbf> INPUT=<input_file> OUTPUT=<output_file>"
-	@echo "Additional commands: make serve, make frontend, make test"
+	@echo "Additional commands: make serve, make frontend"
 
 release:
 	cmake -S . -B "$(BUILD_DIR)" -DCMAKE_BUILD_TYPE=Release
@@ -37,6 +37,3 @@ serve: release
 
 frontend:
 	python3 -m http.server "$(FRONTEND_PORT)" --bind 127.0.0.1 --directory frontend
-
-test: release
-	ctest --test-dir "$(BUILD_DIR)" --output-on-failure

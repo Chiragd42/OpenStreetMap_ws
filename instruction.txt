@@ -1,6 +1,8 @@
 Sheet 1 
 
 Place the file in /data/PBF
+Basic functionality were tested with the Baden-Württemberg data set.
+GUI is a basic demonstration and does not always display or navigate the map
 
  Build the program
 Run:
@@ -37,6 +39,7 @@ make serve PBF=<your-pbf-file.pbf> PORT=8080
  Map frontend
 In another terminal:
 make frontend FRONTEND_PORT=5500
+
 
 
 

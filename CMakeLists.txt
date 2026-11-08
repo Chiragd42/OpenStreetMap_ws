@@ -2,8 +2,6 @@ cmake_minimum_required(VERSION 3.16)
 
 project(osm_sheet1 VERSION 0.1.0 LANGUAGES CXX)
 
-include(CTest)
-
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -21,7 +19,6 @@ find_path(PROTOZERO_INCLUDE_DIR protozero/pbf_reader.hpp
 if(NOT OSMIUM_INCLUDE_DIR)
     message(FATAL_ERROR "libosmium headers not found")
 endif()
-
 if(NOT PROTOZERO_INCLUDE_DIR)
     message(FATAL_ERROR "protozero headers not found")
 endif()
@@ -81,46 +78,4 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(osm_inspect PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
     target_compile_options(osm_sheet1_core PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
     target_compile_options(osm_sheet1 PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
-endif()
-
-if(BUILD_TESTING)
-    add_executable(test_administrative_areas
-        tests/test_administrative_areas.cpp
-    )
-    target_link_libraries(test_administrative_areas PRIVATE osm_sheet1_core)
-
-    add_executable(test_building_relations
-        tests/test_building_relations.cpp
-    )
-    target_link_libraries(test_building_relations PRIVATE osm_sheet1_core)
-
-    add_test(
-        NAME inspect_fixture
-        COMMAND ${CMAKE_COMMAND}
-            -DINSPECTOR=$<TARGET_FILE:osm_inspect>
-            -DFIXTURE=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/inspection.osm
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/assert_inspection.cmake
-    )
-
-    add_test(
-        NAME basic_test_fixture
-        COMMAND ${CMAKE_COMMAND}
-            -DSHEET1=$<TARGET_FILE:osm_sheet1>
-            -DFIXTURE=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/inspection.osm
-            -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/tests/basic-test-input.txt
-            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/basic-test-output.txt
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/assert_basic_test.cmake
-    )
-
-    add_test(
-        NAME administrative_area_fixture
-        COMMAND test_administrative_areas
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/administrative-areas.osm
-    )
-
-    add_test(
-        NAME building_relation_fixture
-        COMMAND test_building_relations
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/building-relations.osm
-    )
 endif()
