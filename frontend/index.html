@@ -5,31 +5,323 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="OpenStreetMap Sheet 1 house viewer">
   <title>OSM Sheet 1 Viewer</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIINfQ3yn0L4JdY7x2nP7rN5HFlkS+M8s4M=" crossorigin="">
-  <link rel="stylesheet" href="styles.css">
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIINfQ3yn0L4JdY7x2nP7rN5HFlkS+M8s4M="
+    crossorigin=""
+  />
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    #map {
+      width: 100%;
+      height: 100%;
+    }
+    .panel {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 1000;
+      background: rgba(255, 255, 255, 0.95);
+      border-radius: 8px;
+      padding: 10px 12px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+      min-width: 220px;
+      font-size: 14px;
+    }
+    .panel h3 {
+      margin: 0 0 8px 0;
+      font-size: 14px;
+    }
+    .panel .row {
+      margin-bottom: 6px;
+    }
+    .muted {
+      color: #555;
+      font-size: 12px;
+    }
+    .warn {
+      color: #b45309;
+      font-size: 12px;
+      margin-top: 6px;
+    }
+    .btn {
+      border: 1px solid #cbd5e1;
+      background: #f8fafc;
+      color: #0f172a;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .layer-toggle {
+      display: flex;
+      gap: 7px;
+      align-items: center;
+      cursor: pointer;
+      margin-bottom: 6px;
+    }
+    #houseCount {
+      font-weight: 600;
+    }
+    #zoomValue {
+      color: #555;
+      font-size: 12px;
+    }
+  </style>
 </head>
 <body>
-  <main id="map" aria-label="Interactive OpenStreetMap house viewer"></main>
-
-  <aside class="panel" aria-label="Map controls">
-    <h1>OSM Sheet-1 Viewer</h1>
-    <div class="count-row">
-      <strong id="houseCount">Houses: 0</strong>
-      <span id="zoomValue">Zoom: —</span>
+  <div id="map"></div>
+  <div class="panel">
+    <h3>OSM Sheet-1 Viewer</h3>
+    <div class="row"><strong id="houseCount">Houses: 0</strong></div>
+    <div class="row"><span id="zoomValue">Zoom: —</span></div>
+    <div class="row">
+      <label class="layer-toggle">
+        <input id="showHouses" type="checkbox" checked /> Show houses
+      </label>
     </div>
-    <label class="layer-toggle">
-      <input id="showHouses" type="checkbox" checked>
-      Show houses
-    </label>
-    <p id="status" class="status" aria-live="polite">Starting map…</p>
-    <p id="thresholdWarning" class="warning" hidden>The 10,000-house limit was reached. Zoom in to see the complete area.</p>
-    <p id="tileWarning" class="warning" hidden>Some map tiles could not be loaded. Check the internet connection or browser privacy settings.</p>
-    <button id="refreshButton" type="button">Refresh viewport</button>
-    <p class="hint">Move or zoom to load the visible houses. Click a blue point for details.</p>
-    <p class="backend">Backend: <code id="backendAddress">127.0.0.1:8080</code></p>
-  </aside>
+    <div class="row">
+      <button id="refreshButton" class="btn" type="button">Refresh viewport</button>
+    </div>
+    <div id="thresholdWarning" class="warn" style="display: none;">
+      The 10,000-house limit was reached. Zoom in to see the complete area.
+    </div>
+    <div id="status" class="muted" style="margin-top: 6px;">Loading map…</div>
+    <div class="muted">Backend: <code>http://127.0.0.1:8080</code></div>
+    <div class="muted">Move or zoom to load visible houses. Red = addressed, gold = no address.</div>
+  </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script src="app.js"></script>
+  <script id="sheet1-app">
+    (function () {
+      const backendBase = "http://127.0.0.1:8080";
+      const HOUSE_MIN_ZOOM = 14;
+      const REFRESH_DEBOUNCE_MS = 180;
+      const MAX_VIEWPORT_CACHE_ENTRIES = 20;
+
+      const houseCountEl = document.getElementById("houseCount");
+      const zoomValueEl = document.getElementById("zoomValue");
+      const showHousesEl = document.getElementById("showHouses");
+      const refreshButtonEl = document.getElementById("refreshButton");
+      const thresholdWarningEl = document.getElementById("thresholdWarning");
+      const statusEl = document.getElementById("status");
+
+      const map = L.map("map");
+      map.setView([48.7758, 9.1829], 16);
+
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: "&copy; OpenStreetMap contributors",
+        referrerPolicy: "origin",
+      }).addTo(map);
+
+      const housesLayer = L.layerGroup().addTo(map);
+      const viewportCache = new Map();
+      let activeController = null;
+      let refreshTimer = null;
+      let lastRenderKey = null;
+
+      function setStatus(message) {
+        statusEl.textContent = message;
+      }
+
+      function formatCount(value) {
+        return Number(value || 0).toLocaleString("de-DE");
+      }
+
+      function houseColor(house) {
+        const addressed =
+          house.street || house.house_number || house.postcode || house.city;
+        return addressed ? "#c73a24" : "#c49a42";
+      }
+
+      function popupFor(house) {
+        const wrapper = document.createElement("div");
+        const title = document.createElement("strong");
+        const street = [house.street, house.house_number].filter(Boolean).join(" ");
+        const city = [house.postcode, house.city].filter(Boolean).join(" ");
+        const address = [street, city].filter(Boolean).join(", ");
+        title.textContent = house.name || address || house.building || "Building";
+        const details = document.createElement("div");
+        details.textContent =
+          (address ? address + "\n" : "") +
+          (house.building ? "Type: " + house.building : "") ||
+          "No additional information";
+        const id = document.createElement("div");
+        id.style.fontSize = "11px";
+        id.style.color = "#64748b";
+        id.textContent = house.id || "OSM object";
+        wrapper.append(title, details, id);
+        return wrapper;
+      }
+
+      function applyHouseFeatures(houses, thresholdReached, scanMs) {
+        housesLayer.clearLayers();
+        for (const house of houses) {
+          if (
+            !Number.isFinite(house.lat) ||
+            !Number.isFinite(house.lon)
+          ) {
+            continue;
+          }
+          L.circleMarker([house.lat, house.lon], {
+            radius: 4,
+            color: houseColor(house),
+            fillColor: houseColor(house),
+            fillOpacity: 0.82,
+            weight: 1,
+          })
+            .bindPopup(() => popupFor(house), { maxWidth: 280 })
+            .addTo(housesLayer);
+        }
+
+        houseCountEl.textContent = `Houses: ${formatCount(houses.length)}`;
+        thresholdWarningEl.style.display = thresholdReached ? "block" : "none";
+        setStatus(
+          `Backend online · ${houses.length} houses · scan ${Number(scanMs || 0).toFixed(1)} ms`
+        );
+      }
+
+      function cacheKey(bbox, zoom) {
+        return (
+          zoom +
+          "|" +
+          bbox.map(function (v) {
+            return v.toFixed(4);
+          }).join(",")
+        );
+      }
+
+      function saveCache(key, payload) {
+        if (viewportCache.has(key)) {
+          viewportCache.delete(key);
+        }
+        viewportCache.set(key, payload);
+        while (viewportCache.size > MAX_VIEWPORT_CACHE_ENTRIES) {
+          viewportCache.delete(viewportCache.keys().next().value);
+        }
+      }
+
+      function refreshData() {
+        const zoom = map.getZoom();
+        zoomValueEl.textContent = "Zoom: " + zoom;
+
+        if (!showHousesEl.checked) {
+          housesLayer.clearLayers();
+          houseCountEl.textContent = "Houses: hidden";
+          thresholdWarningEl.style.display = "none";
+          setStatus("House layer is switched off.");
+          return;
+        }
+
+        if (zoom < HOUSE_MIN_ZOOM) {
+          housesLayer.clearLayers();
+          houseCountEl.textContent = `Houses: — (zoom in to ${HOUSE_MIN_ZOOM}+)`;
+          thresholdWarningEl.style.display = "none";
+          setStatus(`Zoom in to level ${HOUSE_MIN_ZOOM} to load houses.`);
+          return;
+        }
+
+        const bounds = map.getBounds();
+        const bbox = [
+          bounds.getWest(),
+          bounds.getSouth(),
+          bounds.getEast(),
+          bounds.getNorth(),
+        ];
+        const key = cacheKey(bbox, zoom);
+
+        if (key === lastRenderKey && viewportCache.has(key)) {
+          const cached = viewportCache.get(key);
+          applyHouseFeatures(
+            cached.houses,
+            cached.threshold_reached,
+            cached.scan_ms
+          );
+          lastRenderKey = key;
+          return;
+        }
+
+        if (viewportCache.has(key)) {
+          const cached = viewportCache.get(key);
+          applyHouseFeatures(
+            cached.houses,
+            cached.threshold_reached,
+            cached.scan_ms
+          );
+          lastRenderKey = key;
+        }
+
+        if (activeController) {
+          activeController.abort();
+        }
+        activeController = new AbortController();
+        const signal = activeController.signal;
+
+        setStatus("Loading houses…");
+        refreshButtonEl.disabled = true;
+
+        const encodedBbox = encodeURIComponent(bbox.join(","));
+        fetch(`${backendBase}/houses?bbox=${encodedBbox}`, { signal: signal })
+          .then(function (response) {
+            if (!response.ok) {
+              throw new Error(response.status);
+            }
+            return response.json();
+          })
+          .then(function (payload) {
+            const houses = Array.isArray(payload.houses) ? payload.houses : [];
+            saveCache(key, {
+              houses: houses,
+              threshold_reached: !!payload.threshold_reached,
+              scan_ms: payload.scan_ms,
+            });
+            lastRenderKey = key;
+            applyHouseFeatures(
+              houses,
+              !!payload.threshold_reached,
+              payload.scan_ms
+            );
+          })
+          .catch(function (error) {
+            if (error.name === "AbortError") {
+              return;
+            }
+            setStatus("Backend unavailable: " + error.message);
+          })
+          .finally(function () {
+            refreshButtonEl.disabled = false;
+            activeController = null;
+          });
+      }
+
+      function scheduleRefresh() {
+        if (refreshTimer !== null) {
+          clearTimeout(refreshTimer);
+        }
+        refreshTimer = setTimeout(refreshData, REFRESH_DEBOUNCE_MS);
+      }
+
+      map.on("moveend", scheduleRefresh);
+      map.on("zoom", function () {
+        zoomValueEl.textContent = "Zoom: " + map.getZoom();
+      });
+      showHousesEl.addEventListener("change", scheduleRefresh);
+      refreshButtonEl.addEventListener("click", function () {
+        lastRenderKey = null;
+        refreshData();
+      });
+
+      setStatus("Ready.");
+      refreshData();
+    })();
+  </script>
 </body>
 </html>

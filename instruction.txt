@@ -1,0 +1,43 @@
+Sheet 1 
+
+Place the file in /data/PBF
+
+ Build the program
+Run:
+make release
+
+ Run extraction normally
+Run:
+make run PBF=<your-pbf-file.pbf>
+
+Logs statistics 
+- Number of nodes, ways, relations were processed
+- Number of buildings, streets, areas were extracted
+- Time taken and memory used
+
+"basicTest"
+
+make basicTest \
+  PBF=<your-pbf-file.pbf> \
+  INPUT=<your-query-file.txt> \
+  OUTPUT=<your-result-file.txt>
+
+- PBF = path to your data file
+- INPUT = path to your query file (you created this)
+- OUTPUT = path for the result file (the program makes this)
+
+The program writes results to your output file. 
+
+
+
+ Map backend 
+make serve PBF=<your-pbf-file.pbf> PORT=8080
+
+
+ Map frontend
+In another terminal:
+make frontend FRONTEND_PORT=5500
+
+
+
+
