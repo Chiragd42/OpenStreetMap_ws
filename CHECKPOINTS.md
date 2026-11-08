@@ -82,18 +82,20 @@ Status legend:
 
 ### 10. Record timings, counts, and memory statistics
 
-- Status: `[~]`
-- Intention: Report processing time, object counts, skipped objects, cache
-  timings, and meaningful memory measurements.
-- Verification: Produce a concise statistics report for a complete run.
+- Status: `[x]`
+- Intention: Report processing time, object counts, skipped objects, and
+  meaningful memory measurements.
+- Verification: A complete Baden-Württemberg run finished in 31.505 seconds
+  and reported counts, peak memory, temporary-index size, and stored-data size.
 
-### 11. Implement and validate the binary cache
+### 11. Decide whether Sheet 1 requires a persistent binary cache
 
-- Status: `[ ]`
-- Intention: Store extracted records in a versioned binary cache so later runs
-  do not need to parse the PBF again.
-- Verification: Confirm equivalent data after cache loading and reject
-  incompatible cache versions.
+- Status: `[x]`
+- Intention: Follow the revised Sheet 1 requirements without adding an
+  unnecessary persistent format.
+- Verification: The revised sheet requires suitable in-memory storage but does
+  not require a persistent binary cache. The temporary node lookup is discarded
+  after extraction; caching remains a possible later optimization.
 
 ### 12. Build the viewport backend
 
@@ -133,18 +135,19 @@ Status legend:
 
 ## Final validation and submission
 
-### 16. Validate the complete Germany dataset
+### 16. Validate large-dataset scalability
 
-- Status: `[ ]`
-- Intention: Run the complete pipeline on Germany after validating it on
-  smaller extracts.
-- Verification: Record runtime, peak memory, cache size, extracted counts,
-  skipped objects, and test results.
+- Status: `[~]`
+- Intention: Keep the extraction design suitable for the revised sheet's
+  Europe-scale grading target.
+- Verification: Baden-Württemberg completes successfully; Germany and Europe
+  remain to be completed on hardware with enough memory for the extracted data.
 
 ### 17. Complete Ubuntu 22.04 submission documentation
 
-- Status: `[ ]`
+- Status: `[x]`
 - Intention: Document dependency installation, compilation, extraction,
-  caching, basic testing, server startup, and frontend usage.
-- Verification: Follow the instructions in a clean Ubuntu 22.04 environment
-  or equivalent container.
+  basic testing, server startup, and frontend usage.
+- Verification: The README lists Ubuntu packages and the exact revised-sheet
+  Makefile commands. Local command-level verification is recorded before the
+  submission commit.

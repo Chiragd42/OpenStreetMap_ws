@@ -3,8 +3,7 @@
 #include <osmium/area/assembler.hpp>
 #include <osmium/area/multipolygon_manager.hpp>
 #include <osmium/handler.hpp>
-#include <osmium/handler/node_locations_for_ways.hpp>
-#include <osmium/index/map/sparse_file_array.hpp>
+#include <osmium/index/map/flex_mem.hpp>
 #include <osmium/io/any_input.hpp>
 #include <osmium/io/file.hpp>
 #include <osmium/memory/buffer.hpp>
@@ -47,6 +46,30 @@ namespace {
     return tags.has_key("addr:housenumber") || tags.has_key("addr:street") ||
            tags.has_key("addr:place") || tags.has_key("addr:postcode") ||
            tags.has_key("addr:city");
+}
+
+template <typename TValue>
+void sort_and_deduplicate(std::vector<TValue>& values) {
+    std::sort(values.begin(), values.end());
+    values.erase(std::unique(values.begin(), values.end()), values.end());
+}
+
+template <typename TValue>
+[[nodiscard]] bool contains_sorted(const std::vector<TValue>& values, const TValue value) {
+    return std::binary_search(values.begin(), values.end(), value);
+}
+
+[[nodiscard]] bool way_has_directly_required_geometry(const osmium::Way& way) {
+    const auto& tags = way.tags();
+    return tags.has_key("building") || tags.has_key("highway") ||
+           tags.has_tag("boundary", "administrative");
+}
+
+[[nodiscard]] bool way_requires_locations(
+    const osmium::Way& way,
+    const std::vector<osmium::object_id_type>& relation_way_ids) {
+    return way_has_directly_required_geometry(way) ||
+           contains_sorted(relation_way_ids, way.id());
 }
 
 [[nodiscard]] Coordinate coordinate_from_degrees(const double latitude,
@@ -306,10 +329,18 @@ class BuildingRelationManager final
     : public osmium::relations::RelationsManager<BuildingRelationManager, false, true, false> {
 public:
     BuildingRelationManager(const osmium::area::Assembler::config_type& config,
-                            BuildingStore& buildings)
-        : assembler_config_(config), buildings_(buildings) {}
+                            BuildingStore& buildings,
+                            std::vector<osmium::object_id_type>& relation_way_ids)
+        : assembler_config_(config),
+          buildings_(buildings),
+          relation_way_ids_(relation_way_ids) {}
 
     [[nodiscard]] bool new_relation(const osmium::Relation& relation) const {
+        for (const auto& member : relation.members()) {
+            if (member.type() == osmium::item_type::way && member.ref() != 0) {
+                relation_way_ids_.push_back(member.ref());
+            }
+        }
         if (!relation.tags().has_key("building")) {
             return false;
         }
@@ -356,6 +387,7 @@ public:
 private:
     osmium::area::Assembler::config_type assembler_config_;
     BuildingStore& buildings_;
+    std::vector<osmium::object_id_type>& relation_way_ids_;
 };
 
 class AdministrativeAreaStore {
@@ -518,6 +550,88 @@ private:
     BuildingStore& buildings_;
 };
 
+class RequiredNodeCollector final : public osmium::handler::Handler {
+public:
+    RequiredNodeCollector(
+        const std::vector<osmium::object_id_type>& relation_way_ids,
+        std::vector<osmium::unsigned_object_id_type>& required_node_ids)
+        : relation_way_ids_(relation_way_ids), required_node_ids_(required_node_ids) {}
+
+    void way(const osmium::Way& way) {
+        if (!way_requires_locations(way, relation_way_ids_)) {
+            return;
+        }
+        for (const auto& node_ref : way.nodes()) {
+            required_node_ids_.push_back(node_ref.positive_ref());
+        }
+    }
+
+private:
+    const std::vector<osmium::object_id_type>& relation_way_ids_;
+    std::vector<osmium::unsigned_object_id_type>& required_node_ids_;
+};
+
+using SelectiveNodeIndex = osmium::index::map::FlexMem<
+    osmium::unsigned_object_id_type,
+    osmium::Location>;
+
+class SelectiveNodeLocationsForWays final : public osmium::handler::Handler {
+public:
+    SelectiveNodeLocationsForWays(
+        SelectiveNodeIndex& node_index,
+        const std::vector<osmium::unsigned_object_id_type>& required_node_ids,
+        const std::vector<osmium::object_id_type>& relation_way_ids)
+        : node_index_(node_index),
+          required_node_ids_(required_node_ids),
+          relation_way_ids_(relation_way_ids) {}
+
+    void node(const osmium::Node& node) {
+        const auto id = node.positive_id();
+        bool is_required = false;
+
+        if (nodes_are_ordered_ && id >= last_node_id_) {
+            while (next_required_node_ < required_node_ids_.size() &&
+                   required_node_ids_[next_required_node_] < id) {
+                ++next_required_node_;
+            }
+            is_required = next_required_node_ < required_node_ids_.size() &&
+                          required_node_ids_[next_required_node_] == id;
+        } else {
+            nodes_are_ordered_ = false;
+            is_required = contains_sorted(required_node_ids_, id);
+        }
+
+        if (is_required) {
+            node_index_.set(id, node.location());
+        }
+        last_node_id_ = id;
+    }
+
+    void way(osmium::Way& way) {
+        if (!way_requires_locations(way, relation_way_ids_)) {
+            return;
+        }
+        if (!index_is_ready_) {
+            if (!nodes_are_ordered_) {
+                node_index_.sort();
+            }
+            index_is_ready_ = true;
+        }
+        for (auto& node_ref : way.nodes()) {
+            node_ref.set_location(node_index_.get_noexcept(node_ref.positive_ref()));
+        }
+    }
+
+private:
+    SelectiveNodeIndex& node_index_;
+    const std::vector<osmium::unsigned_object_id_type>& required_node_ids_;
+    const std::vector<osmium::object_id_type>& relation_way_ids_;
+    std::size_t next_required_node_{0};
+    osmium::unsigned_object_id_type last_node_id_{0};
+    bool nodes_are_ordered_{true};
+    bool index_is_ready_{false};
+};
+
 class ExtractionHandler final : public osmium::handler::Handler {
 public:
     ExtractionHandler(DataStore& data,
@@ -632,13 +746,9 @@ ExtractionResult extract_pbf(const std::filesystem::path& input_path) {
     }
 
     ExtractionResult result;
-    using NodeIndex = osmium::index::map::SparseFileArray<
-        osmium::unsigned_object_id_type,
-        osmium::Location>;
-
-    NodeIndex node_index;
-    osmium::handler::NodeLocationsForWays<NodeIndex> location_handler{node_index};
-    location_handler.ignore_errors();
+    SelectiveNodeIndex node_index;
+    std::vector<osmium::object_id_type> relation_way_ids;
+    std::vector<osmium::unsigned_object_id_type> required_node_ids;
     BuildingStore buildings{result.data, result.stats};
     AdministrativeAreaStore administrative_areas{result.data, result.stats};
     ExtractionHandler extraction_handler{
@@ -657,7 +767,11 @@ ExtractionResult extract_pbf(const std::filesystem::path& input_path) {
         assembler_config,
         std::move(administrative_filter),
     };
-    BuildingRelationManager building_relation_manager{assembler_config, buildings};
+    BuildingRelationManager building_relation_manager{
+        assembler_config,
+        buildings,
+        relation_way_ids,
+    };
 
     const osmium::io::File input_file{input_path.string()};
 
@@ -666,6 +780,19 @@ ExtractionResult extract_pbf(const std::filesystem::path& input_path) {
         input_file,
         multipolygon_manager,
         building_relation_manager);
+    sort_and_deduplicate(relation_way_ids);
+
+    RequiredNodeCollector required_node_collector{relation_way_ids, required_node_ids};
+    osmium::io::Reader way_reader{input_file, osmium::osm_entity_bits::way};
+    osmium::apply(way_reader, required_node_collector);
+    way_reader.close();
+    sort_and_deduplicate(required_node_ids);
+
+    SelectiveNodeLocationsForWays location_handler{
+        node_index,
+        required_node_ids,
+        relation_way_ids,
+    };
 
     AdministrativeAreaHandler area_handler{administrative_areas};
     auto& multipolygon_handler = multipolygon_manager.handler(
@@ -708,7 +835,10 @@ ExtractionResult extract_pbf(const std::filesystem::path& input_path) {
         std::chrono::steady_clock::now() - started).count();
     result.stats.cpu_seconds = process_cpu_seconds();
     result.stats.peak_memory_mib = peak_memory_mib();
-    result.stats.temporary_node_index_bytes = node_index.used_memory();
+    result.stats.temporary_node_index_bytes =
+        node_index.used_memory() +
+        required_node_ids.capacity() * sizeof(osmium::unsigned_object_id_type) +
+        relation_way_ids.capacity() * sizeof(osmium::object_id_type);
     result.stats.stored_data_bytes = result.data.estimated_bytes();
     return result;
 }

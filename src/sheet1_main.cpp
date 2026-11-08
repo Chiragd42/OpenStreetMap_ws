@@ -24,6 +24,7 @@ struct Options {
 
 void print_usage() {
     std::cout << "Usage:\n"
+              << "  osm_sheet1 --pbf <file.osm.pbf>\n"
               << "  osm_sheet1 [--pbf <file.osm.pbf>] --basicTest <input_file> <output_file>\n"
               << "  osm_sheet1 [--pbf <file.osm.pbf>] --serve [--port <port>]\n";
 }
