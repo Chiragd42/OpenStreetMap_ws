@@ -50,7 +50,8 @@ std::size_t DataStore::estimated_bytes() const noexcept {
            administrative_areas.capacity() * sizeof(AdministrativeArea) +
            street_points.capacity() * sizeof(Coordinate) +
            administrative_rings.capacity() * sizeof(AdministrativeRing) +
-           administrative_points.capacity() * sizeof(Coordinate);
+           administrative_points.capacity() * sizeof(Coordinate) +
+           region_memberships.capacity() * sizeof(std::uint32_t);
 }
 
 std::string format_osm_id(const OsmId& id) {

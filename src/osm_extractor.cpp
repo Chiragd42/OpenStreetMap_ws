@@ -62,7 +62,7 @@ template <typename TValue>
 [[nodiscard]] bool way_has_directly_required_geometry(const osmium::Way& way) {
     const auto& tags = way.tags();
     return tags.has_key("building") || tags.has_key("highway") ||
-           tags.has_tag("boundary", "administrative");
+           tags.has_tag("boundary", "administrative") || tags.has_tag("boundary", "postal_code");
 }
 
 [[nodiscard]] bool way_requires_locations(
@@ -318,6 +318,8 @@ private:
         building.house_number = data_.strings.intern(tag(tags, "addr:housenumber"));
         building.postcode = data_.strings.intern(tag(tags, "addr:postcode"));
         building.city = data_.strings.intern(tag(tags, "addr:city"));
+        building.state = data_.strings.intern(tag(tags, "addr:state"));
+        building.country = data_.strings.intern(tag(tags, "addr:country"));
     }
 
     DataStore& data_;
@@ -401,6 +403,7 @@ public:
             auto& area = data_.administrative_areas[existing->second];
             area.name = data_.strings.intern(selected_name(relation.tags()));
             area.admin_level = admin_level(relation.tags());
+            area.postcode = data_.strings.intern(tag(relation.tags(), "postal_code"));
             return;
         }
 
@@ -408,6 +411,7 @@ public:
         area.id = OsmId{OsmObjectType::relation, relation.id()};
         area.name = data_.strings.intern(selected_name(relation.tags()));
         area.admin_level = admin_level(relation.tags());
+        area.postcode = data_.strings.intern(tag(relation.tags(), "postal_code"));
         relation_indices_.emplace(relation.id(), data_.administrative_areas.size());
         data_.administrative_areas.push_back(area);
         ++stats_.extracted_administrative_areas;
@@ -433,6 +437,7 @@ public:
         }
 
         auto& area = data_.administrative_areas[area_index];
+        area.postcode = data_.strings.intern(tag(source.tags(), "postal_code"));
         if (area.name == kInvalidStringId) {
             area.name = data_.strings.intern(selected_name(source.tags()));
         }
@@ -717,7 +722,7 @@ public:
             buildings_.add_relation_metadata(relation);
         }
 
-        if (tags.has_tag("boundary", "administrative")) {
+        if (tags.has_tag("boundary", "administrative") || tags.has_tag("boundary", "postal_code")) {
             administrative_areas_.add_relation_metadata(relation);
         }
     }
@@ -730,6 +735,8 @@ private:
         building.house_number = data_.strings.intern(tag(tags, "addr:housenumber"));
         building.postcode = data_.strings.intern(tag(tags, "addr:postcode"));
         building.city = data_.strings.intern(tag(tags, "addr:city"));
+        building.state = data_.strings.intern(tag(tags, "addr:state"));
+        building.country = data_.strings.intern(tag(tags, "addr:country"));
     }
 
     DataStore& data_;
@@ -763,6 +770,7 @@ ExtractionResult extract_pbf(const std::filesystem::path& input_path) {
     assembler_config.ignore_invalid_locations = false;
     osmium::TagsFilter administrative_filter{false};
     administrative_filter.add_rule(true, "boundary", "administrative");
+    administrative_filter.add_rule(true, "boundary", "postal_code");
     osmium::area::MultipolygonManager<osmium::area::Assembler> multipolygon_manager{
         assembler_config,
         std::move(administrative_filter),

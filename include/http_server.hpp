@@ -6,10 +6,12 @@
 #include <cstdint>
 
 namespace sheet1 {
+class SpatialIndex;
 
 inline constexpr std::size_t kViewportBuildingThreshold = 10'000;
 
 int run_http_server(const DataStore& data,
+                    const SpatialIndex& spatial,
                     std::uint16_t port,
                     std::size_t max_requests = 0);
 

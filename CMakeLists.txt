@@ -34,6 +34,8 @@ add_library(osm_sheet1_core
     src/osm_extractor.cpp
     src/osm_model.cpp
     src/viewport_query.cpp
+    src/spatial_index.cpp
+    src/spatial_json.cpp
 )
 
 add_executable(osm_sheet1

@@ -1,4 +1,4 @@
-.PHONY: help release run basicTest serve frontend
+.PHONY: help release run basicTest revGeo serve frontend
 
 BUILD_DIR ?= build-release
 BINARY := $(BUILD_DIR)/osm_sheet1
@@ -6,10 +6,11 @@ PORT ?= 8080
 FRONTEND_PORT ?= 5500
 
 help:
-	@echo "Required Sheet 1 commands:"
+	@echo "Sheet 2 commands:"
 	@echo "  make release"
 	@echo "  make run PBF=<file.pbf>"
 	@echo "  make basicTest PBF=<file.pbf> INPUT=<input_file> OUTPUT=<output_file>"
+	@echo "  make revGeo PBF=<file.pbf> INPUT=<coordinates_file> OUTPUT=<output_file>"
 	@echo "Additional commands: make serve, make frontend"
 
 release:
@@ -37,3 +38,10 @@ serve: release
 
 frontend:
 	python3 -m http.server "$(FRONTEND_PORT)" --bind 127.0.0.1 --directory frontend
+
+revGeo: release
+	@test -f "$(PBF)" || { echo "PBF file not found: $(PBF)"; exit 2; }
+	@test -f "$(INPUT)" || { echo "Input file not found: $(INPUT)"; exit 2; }
+	@test -n "$(OUTPUT)" || { echo "OUTPUT is required"; exit 2; }
+	@mkdir -p "$(dir $(OUTPUT))"
+	"$(BINARY)" --pbf "$(PBF)" --revGeo "$(INPUT)" "$(OUTPUT)"

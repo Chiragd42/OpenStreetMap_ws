@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="OpenStreetMap Sheet 1 house viewer">
-  <title>OSM Sheet 1 Viewer</title>
+  <title>OSM Reverse Geocoder</title>
   <link
     rel="stylesheet"
     href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -79,7 +79,7 @@
 <body>
   <div id="map"></div>
   <div class="panel">
-    <h3>OSM Sheet-1 Viewer</h3>
+    <h3>OSM Reverse Geocoder · Sheet 2</h3>
     <div class="row"><strong id="houseCount">Houses: 0</strong></div>
     <div class="row"><span id="zoomValue">Zoom: —</span></div>
     <div class="row">
@@ -87,6 +87,11 @@
         <input id="showHouses" type="checkbox" checked /> Show houses
       </label>
     </div>
+    <div class="row"><label><input id="showStreets" type="checkbox"> Streets</label>
+      <label><input id="showRegions" type="checkbox"> Regions</label></div>
+    <div class="row"><label><input id="showViewport" type="checkbox" checked> Load objects in view</label></div>
+    <div class="row"><label><input id="reverseMode" type="checkbox" checked> Click map to reverse geocode</label></div>
+    <div id="reverseResult" class="muted" role="status" style="max-width:300px;max-height:220px;overflow:auto;white-space:pre-line"></div>
     <div class="row">
       <button id="refreshButton" class="btn" type="button">Refresh viewport</button>
     </div>
@@ -113,7 +118,7 @@
       const thresholdWarningEl = document.getElementById("thresholdWarning");
       const statusEl = document.getElementById("status");
 
-      const map = L.map("map");
+      const map = L.map("map", {preferCanvas:true});
       map.setView([48.7758, 9.1829], 16);
 
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -123,6 +128,11 @@
       }).addTo(map);
 
       const housesLayer = L.layerGroup().addTo(map);
+      const streetLayer=L.geoJSON(null,{style:{color:"#244b78",weight:3},onEachFeature:(f,l)=>l.bindPopup(()=>{const el=document.createElement("div");el.textContent=f.properties.name||f.properties.id;return el;})}).addTo(map);
+      const regionLayer=L.geoJSON(null,{style:{color:"#406539",weight:2,fillOpacity:0.05},onEachFeature:(f,l)=>l.bindPopup(()=>{const el=document.createElement("div");el.textContent=f.properties.name||f.properties.id;return el;})}).addTo(map);
+      const reverseLayer=L.layerGroup().addTo(map);
+      let reverseController=null;
+      let requestSequence=0;
       const viewportCache = new Map();
       let activeController = null;
       let refreshTimer = null;
@@ -210,9 +220,21 @@
       }
 
       function refreshData() {
+        const sequence=++requestSequence;
+        if(activeController) {activeController.abort();activeController=null;}
+        refreshButtonEl.disabled=false;
         const zoom = map.getZoom();
         zoomValueEl.textContent = "Zoom: " + zoom;
 
+        if (!document.getElementById("showViewport").checked) {
+          housesLayer.clearLayers();streetLayer.clearLayers();regionLayer.clearLayers();setStatus("Viewport loading is off.");return;
+        }
+        const boundsForGeometry=map.getBounds();
+        const geometryBbox=encodeURIComponent([boundsForGeometry.getWest(),boundsForGeometry.getSouth(),boundsForGeometry.getEast(),boundsForGeometry.getNorth()].join(","));
+        for(const [id,route,layer] of [["showStreets","streets",streetLayer],["showRegions","regions",regionLayer]]) {
+          layer.clearLayers();
+          if(document.getElementById(id).checked) fetch(`${backendBase}/${route}?bbox=${geometryBbox}`).then(r=>{if(!r.ok)throw Error(r.status);return r.json();}).then(payload=>{if(sequence===requestSequence && document.getElementById(id).checked)layer.addData(payload);}).catch(e=>{if(sequence===requestSequence)setStatus(`Geometry unavailable: ${e.message}`);});
+        }
         if (!showHousesEl.checked) {
           housesLayer.clearLayers();
           houseCountEl.textContent = "Houses: hidden";
@@ -277,6 +299,7 @@
             return response.json();
           })
           .then(function (payload) {
+            if(sequence!==requestSequence)return;
             const houses = Array.isArray(payload.houses) ? payload.houses : [];
             saveCache(key, {
               houses: houses,
@@ -291,12 +314,13 @@
             );
           })
           .catch(function (error) {
-            if (error.name === "AbortError") {
+            if (error.name === "AbortError" || sequence!==requestSequence) {
               return;
             }
             setStatus("Backend unavailable: " + error.message);
           })
           .finally(function () {
+            if(sequence!==requestSequence)return;
             refreshButtonEl.disabled = false;
             activeController = null;
           });
@@ -314,6 +338,26 @@
         zoomValueEl.textContent = "Zoom: " + map.getZoom();
       });
       showHousesEl.addEventListener("change", scheduleRefresh);
+      for(const id of ["showStreets","showRegions","showViewport"])document.getElementById(id).addEventListener("change",scheduleRefresh);
+      document.getElementById("reverseMode").addEventListener("change",()=>{if(reverseController)reverseController.abort();reverseLayer.clearLayers();document.getElementById("reverseResult").textContent="";});
+      map.on("click",async event=>{
+        if(!document.getElementById("reverseMode").checked)return;
+        if(reverseController)reverseController.abort();
+        const controller=new AbortController();reverseController=controller;
+        const result=document.getElementById("reverseResult");result.textContent="Finding closest object…";reverseLayer.clearLayers();
+        L.circleMarker(event.latlng,{radius:6,color:"#111",fillOpacity:1}).addTo(reverseLayer);
+        try {
+          const response=await fetch(`${backendBase}/reverse?lat=${event.latlng.lat}&lon=${event.latlng.lng}`,{signal:controller.signal});
+          const payload=await response.json();if(!response.ok)throw Error(payload.error||response.status);
+          if(controller!==reverseController)return;
+          const hit=payload.nearest;
+          result.textContent=hit?`${hit.kind}: ${hit.name||hit.id}\n${hit.full_address||"Address unavailable in source data"}\n${hit.distance_m.toFixed(1)} m · ${hit.id}\nRegions: ${payload.regions.map(r=>r.name||r.id).join(", ")}`:"No objects found.";
+          for(const item of payload.results||[]) {
+            L.geoJSON(item.geometry,{style:{color:"#b52b20",weight:5,fillOpacity:0.12},pointToLayer:(_,latlng)=>L.circleMarker(latlng,{radius:7,color:"#b52b20"})}).bindPopup(()=>{const el=document.createElement("div");el.textContent=`${item.id}: ${item.full_address||item.name}`;return el;}).addTo(reverseLayer);
+          }
+          if(hit)L.polyline([event.latlng,[hit.lat,hit.lon]],{color:"#b52b20",dashArray:"5,5",weight:2}).addTo(reverseLayer);
+        } catch(error) {if(error.name!=="AbortError" && controller===reverseController)result.textContent=`Reverse lookup failed: ${error.message}`;}
+      });
       refreshButtonEl.addEventListener("click", function () {
         lastRenderKey = null;
         refreshData();

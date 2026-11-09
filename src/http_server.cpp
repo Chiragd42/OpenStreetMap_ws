@@ -1,6 +1,8 @@
 #include "http_server.hpp"
 
 #include "viewport_query.hpp"
+#include "spatial_json.hpp"
+#include <chrono>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -207,6 +209,7 @@ void append_optional_string(std::ostringstream& output,
            << ",\"threshold\":" << kViewportBuildingThreshold
            << ",\"threshold_reached\":"
            << (query.threshold_reached ? "true" : "false")
+           << ",\"matched_exact\":" << (query.threshold_reached ? "false" : "true")
            << ",\"scan_ms\":" << std::fixed << std::setprecision(3)
            << query.scan_milliseconds
            << ",\"houses\":[";
@@ -239,6 +242,8 @@ void append_optional_string(std::ostringstream& output,
         append_optional_string(output, data, building.postcode);
         output << ",\"city\":";
         append_optional_string(output, data, building.city);
+        output << ",\"regions\":";
+        append_regions_json(output,data,building.regions_begin,building.regions_count);
         output << '}';
     }
     output << "]}";
@@ -268,6 +273,7 @@ void append_optional_string(std::ostringstream& output,
 
 [[nodiscard]] std::string handle_request(const HttpRequest& request,
                                          const DataStore& data,
+                                         const SpatialIndex& spatial,
                                          int& status,
                                          std::string_view& reason) {
     if (request.method != "GET") {
@@ -280,7 +286,14 @@ void append_optional_string(std::ostringstream& output,
         reason = "OK";
         return "{\"status\":\"ok\"}";
     }
-    if (request.path != "/houses") {
+    if(request.path=="/reverse") {
+        const auto lat=query_parameter(request.query,"lat"),lon=query_parameter(request.query,"lon");
+        const auto y=lat?parse_double(*lat):std::nullopt,x=lon?parse_double(*lon):std::nullopt;
+        if(!y||!x||std::abs(*y)>90||std::abs(*x)>180) {status=400;reason="Bad Request";return error_json("Expected valid lat and lon");}
+        try {auto body=reverse_json(data,spatial,{static_cast<std::int32_t>(std::llround(*y*1e7)),static_cast<std::int32_t>(std::llround(*x*1e7))});status=200;reason="OK";return body;}
+        catch(const std::exception& e){status=400;reason="Bad Request";return error_json(e.what());}
+    }
+    if (request.path != "/houses" && request.path!="/streets" && request.path!="/regions") {
         status = 404;
         reason = "Not Found";
         return error_json("Route not found");
@@ -299,8 +312,18 @@ void append_optional_string(std::ostringstream& output,
         return error_json("Expected bbox=minLon,minLat,maxLon,maxLat");
     }
 
-    const auto result = query_buildings_in_viewport(
-        data, *viewport, kViewportBuildingThreshold);
+    status=200;reason="OK";
+    if(request.path!="/houses") {
+        try {return geometry_json(data,spatial,viewport->minimum,viewport->maximum,request.path=="/streets"?1:2);}
+        catch(const std::exception& e){status=400;reason="Bad Request";return error_json(e.what());}
+    }
+    const auto start=std::chrono::steady_clock::now();
+    ViewportQueryResult result;
+    result.building_indices=spatial.viewport(viewport->minimum,viewport->maximum,0,kViewportBuildingThreshold+1);
+    result.matched=result.building_indices.size();
+    result.threshold_reached=result.matched>kViewportBuildingThreshold;
+    if(result.threshold_reached)result.building_indices.resize(kViewportBuildingThreshold);
+    result.scan_milliseconds=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
     std::cout << "Viewport houses matched=" << result.matched
               << " returned=" << result.building_indices.size()
               << " threshold_reached=" << (result.threshold_reached ? "yes" : "no")
@@ -328,6 +351,7 @@ void append_optional_string(std::ostringstream& output,
 } // namespace
 
 int run_http_server(const DataStore& data,
+                    const SpatialIndex& spatial,
                     const std::uint16_t port,
                     const std::size_t max_requests) {
     std::signal(SIGPIPE, SIG_IGN);
@@ -388,7 +412,7 @@ int run_http_server(const DataStore& data,
             const std::string_view raw_request{
                 request_buffer.data(), static_cast<std::size_t>(received)};
             if (const auto request = parse_request_line(raw_request); request.has_value()) {
-                body = handle_request(*request, data, status, reason);
+                body = handle_request(*request, data, spatial, status, reason);
             }
         }
 

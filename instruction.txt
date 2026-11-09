@@ -1,44 +1,105 @@
-Sheet 1 
+Sheet 2 - Germany / Baden-Wuerttemberg
 
-Place the file in /data/PBF
-Basic functionality were tested with the Baden-Württemberg data set.
-GUI is a basic demonstration and does not always display or navigate the map
+Ubuntu 22.04 dependencies:
+sudo apt update
+sudo apt install build-essential cmake make python3 libosmium2-dev libprotozero-dev zlib1g-dev libbz2-dev libexpat1-dev
 
- Build the program
-Run:
+On macOS with Homebrew:
+brew install cmake libosmium protozero
+
+Place the OSM PBF in data/pbf/ (lowercase). Dataset files are excluded from Git.
+Run all commands from the project directory. Replace example filenames as needed.
+
+Build:
 make release
 
- Run extraction normally
-Run:
-make run PBF=<your-pbf-file.pbf>
+Extract data, build spatial indexes, and assign region attributes:
+make run PBF=data/pbf/baden-wuerttemberg-261107.osm.pbf
 
-Logs statistics 
-- Number of nodes, ways, relations were processed
-- Number of buildings, streets, areas were extracted
-- Time taken and memory used
+Sheet 1 compatible name queries (one substring per line):
+make basicTest PBF=data/pbf/baden-wuerttemberg-261107.osm.pbf INPUT=queries.txt OUTPUT=name-results.txt
 
-"basicTest"
+Sheet 2 reverse queries (one latitude longitude pair per line):
+make revGeo PBF=data/pbf/baden-wuerttemberg-261107.osm.pbf INPUT=coordinates.txt OUTPUT=nearest-buildings.txt
 
-make basicTest \
-  PBF=<your-pbf-file.pbf> \
-  INPUT=<your-query-file.txt> \
-  OUTPUT=<your-result-file.txt>
+Example coordinates.txt:
+48.732025 9.149272
+48.734109 9.104308
 
-- PBF = path to your data file
-- INPUT = path to your query file (you created this)
-- OUTPUT = path for the result file (the program makes this)
+Each output line contains at most 10 original typed building IDs, sorted by
+spherical distance to their stored representative points. Address-only nodes
+are excluded from this building-only output. Ties use OSM type and ID.
+Invalid coordinates report the line number. Input and output must differ.
 
-The program writes results to your output file. 
+Backend (keep this terminal open):
+make serve PBF=data/pbf/baden-wuerttemberg-261107.osm.pbf PORT=8080
 
-
-
- Map backend 
-make serve PBF=<your-pbf-file.pbf> PORT=8080
-
-
- Map frontend
-In another terminal:
+Frontend (second terminal):
 make frontend FRONTEND_PORT=5500
+Open http://127.0.0.1:5500 in a browser.
+
+Click the map with reverse mode enabled to see the closest object and address.
+Toggle streets and regions to show polylines and polygons. House markers use
+the existing red/addressed and gold/no-address colors. The viewport toggle
+disables automatic object loading. Houses load at zoom 14 or higher.
+The map uses internet-hosted Leaflet and OSM tiles. Backend defaults to 8080.
+Stop each server with Ctrl+C. Each backend invocation preprocesses the PBF;
+there is no persistent cache. Leave the PBF in place for your next run.
+
+HTTP API:
+/health
+/reverse?lat=48.7758&lon=9.1829
+/houses?bbox=9.17,48.77,9.19,48.78
+/streets?bbox=9.17,48.77,9.19,48.78
+/regions?bbox=9.17,48.77,9.19,48.78
+
+Reverse returns nearest building/street candidates, the nearest 10 buildings,
+and containing administrative/postal regions. Streets use closest points on
+great-circle segments, not their midpoint. Regions are a fallback when the
+closest building/street is over 1 km away, and always appear as context.
+Missing address components remain empty; address_complete reports whether
+the source supplied enough information. Incomplete boundary relations
+are counted during extraction and cannot be used for region attribution.
+
+Geometry and performance:
+- Latitude/longitude are converted to unit-sphere coordinates for distances.
+  Building distances use the mean Earth radius 6371008.8 m. This is a
+  spherical approximation, rather than an ellipsoidal survey calculation.
+- Polygon edges are minor great-circle arcs. A gnomonic projection centred
+  on Germany preserves these arcs as straight segments for PIP tests.
+  Geometry outside the open hemisphere centred on 51 N, 10 E is rejected.
+  This is not a worldwide polygon index.
+- Prepared ring edge buckets accelerate PIP; holes and separate outer rings
+  are handled together. Boundary points are treated as covered.
+- Balanced bounding-volume trees prune polygon candidates, street geometry,
+  and building searches. Construction is O(n log n), storage O(n), and
+  nearest queries are typically sublinear. Worst-case queries remain O(n)
+  for coincident or poorly separated geometry; there is no fixed cell size.
+- Region IDs are stored in compact ranges for buildings, streets, and areas.
+  Buildings use representative points. Streets include all regions touched
+  or crossed by any segment, even if both endpoints are outside. Area
+  memberships mean overlap, not strict parent/child containment.
+- Viewport responses are capped: 10000 houses, 1000 streets, 50 regions.
+  Houses matched is a lower bound when capped. Geometry viewport results
+  use conservative bounding boxes and may include objects just outside view.
+- The Sheet 1 name-file command retains its compatible substring sweep.
+  Reverse geocoding and house viewport requests use spatial indexes.
+
+Browser usability should be checked manually before submission.
+Germany/Europe scale is not validated.
+
+Measured on the local Baden-Wuerttemberg extract (652827459 bytes):
+5309163 building/address objects, 2408324 streets, 6451 administrative/postal
+areas. 509 areas have no complete geometry and cannot receive PIP queries.
+Extraction 27.577 s; spatial trees 3.044 s; all region assignments 49.208 s.
+Peak process memory after preprocessing: 1309 MiB. Timings vary by machine.
+Three real make revGeo input lines each produced 10 sorted building IDs.
+An HTTP reverse lookup took 2.7 ms; a 22-object house viewport took 0.118 ms.
+Synthetic holes, disjoint outers, boundary points and cross-border paths were
+checked. 200 indexed top-10 queries matched exhaustive spherical searches.
+
+Projection reference: USGS Map Projections - A Working Manual, section 22.
+https://pubs.usgs.gov/pp/1395/report.pdf
 
 
 

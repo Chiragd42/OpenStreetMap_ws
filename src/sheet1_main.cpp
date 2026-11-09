@@ -1,6 +1,9 @@
 #include "basic_test.hpp"
 #include "http_server.hpp"
 #include "osm_extractor.hpp"
+#include "spatial_index.hpp"
+#include <chrono>
+#include <sys/resource.h>
 
 #include <cstdint>
 #include <exception>
@@ -18,6 +21,7 @@ struct Options {
     std::filesystem::path basic_test_output;
     bool run_basic_test{false};
     bool serve{false};
+    bool reverse_file{false};
     std::uint16_t port{8080};
     std::size_t max_requests{0};
 };
@@ -26,6 +30,7 @@ void print_usage() {
     std::cout << "Usage:\n"
               << "  osm_sheet1 --pbf <file.osm.pbf>\n"
               << "  osm_sheet1 [--pbf <file.osm.pbf>] --basicTest <input_file> <output_file>\n"
+              << "  osm_sheet1 [--pbf <file.osm.pbf>] --revGeo <input_file> <output_file>\n"
               << "  osm_sheet1 [--pbf <file.osm.pbf>] --serve [--port <port>]\n";
 }
 
@@ -68,13 +73,14 @@ void print_usage() {
             options.pbf = std::string{argument.substr(6)};
             continue;
         }
-        if (argument == "--basicTest") {
+        if (argument == "--basicTest" || argument == "--revGeo") {
             if (i + 2 >= argc) {
-                throw std::runtime_error{"--basicTest requires input and output paths"};
+                throw std::runtime_error{std::string(argument) + " requires input and output paths"};
             }
             options.basic_test_input = argv[++i];
             options.basic_test_output = argv[++i];
-            options.run_basic_test = true;
+            options.reverse_file = argument == "--revGeo";
+            options.run_basic_test = !options.reverse_file;
             continue;
         }
         if (argument == "--serve") {
@@ -111,9 +117,27 @@ void print_usage() {
 
 int main(const int argc, char* argv[]) {
     try {
+        std::cout << std::unitbuf;
         const auto options = parse_options(argc, argv);
+        if((options.run_basic_test||options.reverse_file) && !std::filesystem::is_regular_file(options.basic_test_input))
+            throw std::runtime_error("Query input file not found: "+options.basic_test_input.string());
         auto result = sheet1::extract_pbf(options.pbf);
         sheet1::print_extraction_report(options.pbf, result);
+        const auto started = std::chrono::steady_clock::now();
+        std::cout << "Building spatial indexes...\n" << std::flush;
+        sheet1::SpatialIndex spatial(result.data);
+        std::cout << "Spatial index seconds: " << std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count() << '\n' << std::flush;
+        spatial.assign_regions(result.data);
+        rusage usage{};
+        if(getrusage(RUSAGE_SELF,&usage)==0) {
+#ifdef __APPLE__
+            const double peak=static_cast<double>(usage.ru_maxrss)/(1024.0*1024.0);
+#else
+            const double peak=static_cast<double>(usage.ru_maxrss)/1024.0;
+#endif
+            std::cout<<"Preprocessing peak memory MiB: "<<peak<<'\n';
+        }
+        if(options.reverse_file) sheet1::run_reverse_file(spatial, result.data, options.basic_test_input, options.basic_test_output);
 
         if (options.run_basic_test) {
             sheet1::run_basic_test(result.data,
@@ -122,7 +146,7 @@ int main(const int argc, char* argv[]) {
             std::cout << "Basic-test results written to: " << options.basic_test_output << '\n';
         }
         if (options.serve) {
-            return sheet1::run_http_server(result.data, options.port, options.max_requests);
+            return sheet1::run_http_server(result.data, spatial, options.port, options.max_requests);
         }
         return 0;
     } catch (const std::exception& error) {

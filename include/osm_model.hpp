@@ -57,7 +57,11 @@ struct Building {
     StringId house_number{kInvalidStringId};
     StringId postcode{kInvalidStringId};
     StringId city{kInvalidStringId};
+    StringId state{kInvalidStringId};
+    StringId country{kInvalidStringId};
     bool has_point{false};
+    std::uint64_t regions_begin{0};
+    std::uint32_t regions_count{0};
 };
 
 struct Street {
@@ -67,6 +71,8 @@ struct Street {
     StringId highway_class{kInvalidStringId};
     std::uint32_t points_begin{0};
     std::uint32_t points_count{0};
+    std::uint64_t regions_begin{0};
+    std::uint32_t regions_count{0};
 };
 
 struct AdministrativeRing {
@@ -85,6 +91,9 @@ struct AdministrativeArea {
     std::uint32_t outer_ring_count{0};
     std::uint32_t inner_ring_count{0};
     bool has_geometry{false};
+    StringId postcode{kInvalidStringId};
+    std::uint64_t regions_begin{0};
+    std::uint32_t regions_count{0};
 };
 
 struct DataStore {
@@ -95,6 +104,7 @@ struct DataStore {
     std::vector<Coordinate> street_points;
     std::vector<AdministrativeRing> administrative_rings;
     std::vector<Coordinate> administrative_points;
+    std::vector<std::uint32_t> region_memberships;
 
     [[nodiscard]] std::size_t estimated_bytes() const noexcept;
 };
