@@ -96,7 +96,7 @@
       <button id="refreshButton" class="btn" type="button">Refresh viewport</button>
     </div>
     <div id="thresholdWarning" class="warn" style="display: none;">
-      The 10,000-house limit was reached. Zoom in to see the complete area.
+      The display limit was reached. Zoom in for more detail.
     </div>
     <div id="status" class="muted" style="margin-top: 6px;">Loading map…</div>
     <div class="muted">Backend: <code>http://127.0.0.1:8080</code></div>
@@ -105,266 +105,136 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <script id="sheet1-app">
-    (function () {
+    (() => {
+      "use strict";
       const backendBase = "http://127.0.0.1:8080";
-      const HOUSE_MIN_ZOOM = 14;
-      const REFRESH_DEBOUNCE_MS = 180;
-      const MAX_VIEWPORT_CACHE_ENTRIES = 20;
-
-      const houseCountEl = document.getElementById("houseCount");
-      const zoomValueEl = document.getElementById("zoomValue");
-      const showHousesEl = document.getElementById("showHouses");
-      const refreshButtonEl = document.getElementById("refreshButton");
-      const thresholdWarningEl = document.getElementById("thresholdWarning");
-      const statusEl = document.getElementById("status");
-
-      const map = L.map("map", {preferCanvas:true});
-      map.setView([48.7758, 9.1829], 16);
-
+      const el = id => document.getElementById(id);
+      const map = L.map("map", {preferCanvas: true, minZoom: 3, maxZoom: 19}).setView([48.7758, 9.1829], 16);
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19,
-        attribution: "&copy; OpenStreetMap contributors",
-        referrerPolicy: "origin",
-      }).addTo(map);
-
-      const housesLayer = L.layerGroup().addTo(map);
-      const streetLayer=L.geoJSON(null,{style:{color:"#244b78",weight:3},onEachFeature:(f,l)=>l.bindPopup(()=>{const el=document.createElement("div");el.textContent=f.properties.name||f.properties.id;return el;})}).addTo(map);
-      const regionLayer=L.geoJSON(null,{style:{color:"#406539",weight:2,fillOpacity:0.05},onEachFeature:(f,l)=>l.bindPopup(()=>{const el=document.createElement("div");el.textContent=f.properties.name||f.properties.id;return el;})}).addTo(map);
-      const reverseLayer=L.layerGroup().addTo(map);
-      let reverseController=null;
-      let requestSequence=0;
-      const viewportCache = new Map();
-      let activeController = null;
-      let refreshTimer = null;
-      let lastRenderKey = null;
-
-      function setStatus(message) {
-        statusEl.textContent = message;
-      }
-
-      function formatCount(value) {
-        return Number(value || 0).toLocaleString("de-DE");
-      }
-
-      function houseColor(house) {
-        const addressed =
-          house.street || house.house_number || house.postcode || house.city;
-        return addressed ? "#c73a24" : "#c49a42";
-      }
-
-      function popupFor(house) {
-        const wrapper = document.createElement("div");
-        const title = document.createElement("strong");
-        const street = [house.street, house.house_number].filter(Boolean).join(" ");
-        const city = [house.postcode, house.city].filter(Boolean).join(" ");
-        const address = [street, city].filter(Boolean).join(", ");
-        title.textContent = house.name || address || house.building || "Building";
-        const details = document.createElement("div");
-        details.textContent =
-          (address ? address + "\n" : "") +
-          (house.building ? "Type: " + house.building : "") ||
-          "No additional information";
-        const id = document.createElement("div");
-        id.style.fontSize = "11px";
-        id.style.color = "#64748b";
-        id.textContent = house.id || "OSM object";
-        wrapper.append(title, details, id);
-        return wrapper;
-      }
-
-      function applyHouseFeatures(houses, thresholdReached, scanMs) {
-        housesLayer.clearLayers();
-        for (const house of houses) {
-          if (
-            !Number.isFinite(house.lat) ||
-            !Number.isFinite(house.lon)
-          ) {
-            continue;
-          }
-          L.circleMarker([house.lat, house.lon], {
-            radius: 4,
-            color: houseColor(house),
-            fillColor: houseColor(house),
-            fillOpacity: 0.82,
-            weight: 1,
-          })
-            .bindPopup(() => popupFor(house), { maxWidth: 280 })
-            .addTo(housesLayer);
-        }
-
-        houseCountEl.textContent = `Houses: ${formatCount(houses.length)}`;
-        thresholdWarningEl.style.display = thresholdReached ? "block" : "none";
-        setStatus(
-          `Backend online · ${houses.length} houses · scan ${Number(scanMs || 0).toFixed(1)} ms`
-        );
-      }
-
-      function cacheKey(bbox, zoom) {
-        return (
-          zoom +
-          "|" +
-          bbox.map(function (v) {
-            return v.toFixed(4);
-          }).join(",")
-        );
-      }
-
-      function saveCache(key, payload) {
-        if (viewportCache.has(key)) {
-          viewportCache.delete(key);
-        }
-        viewportCache.set(key, payload);
-        while (viewportCache.size > MAX_VIEWPORT_CACHE_ENTRIES) {
-          viewportCache.delete(viewportCache.keys().next().value);
-        }
-      }
-
-      function refreshData() {
-        const sequence=++requestSequence;
-        if(activeController) {activeController.abort();activeController=null;}
-        refreshButtonEl.disabled=false;
-        const zoom = map.getZoom();
-        zoomValueEl.textContent = "Zoom: " + zoom;
-
-        if (!document.getElementById("showViewport").checked) {
-          housesLayer.clearLayers();streetLayer.clearLayers();regionLayer.clearLayers();setStatus("Viewport loading is off.");return;
-        }
-        const boundsForGeometry=map.getBounds();
-        const geometryBbox=encodeURIComponent([boundsForGeometry.getWest(),boundsForGeometry.getSouth(),boundsForGeometry.getEast(),boundsForGeometry.getNorth()].join(","));
-        for(const [id,route,layer] of [["showStreets","streets",streetLayer],["showRegions","regions",regionLayer]]) {
-          layer.clearLayers();
-          if(document.getElementById(id).checked) fetch(`${backendBase}/${route}?bbox=${geometryBbox}`).then(r=>{if(!r.ok)throw Error(r.status);return r.json();}).then(payload=>{if(sequence===requestSequence && document.getElementById(id).checked)layer.addData(payload);}).catch(e=>{if(sequence===requestSequence)setStatus(`Geometry unavailable: ${e.message}`);});
-        }
-        if (!showHousesEl.checked) {
-          housesLayer.clearLayers();
-          houseCountEl.textContent = "Houses: hidden";
-          thresholdWarningEl.style.display = "none";
-          setStatus("House layer is switched off.");
-          return;
-        }
-
-        if (zoom < HOUSE_MIN_ZOOM) {
-          housesLayer.clearLayers();
-          houseCountEl.textContent = `Houses: — (zoom in to ${HOUSE_MIN_ZOOM}+)`;
-          thresholdWarningEl.style.display = "none";
-          setStatus(`Zoom in to level ${HOUSE_MIN_ZOOM} to load houses.`);
-          return;
-        }
-
-        const bounds = map.getBounds();
-        const bbox = [
-          bounds.getWest(),
-          bounds.getSouth(),
-          bounds.getEast(),
-          bounds.getNorth(),
-        ];
-        const key = cacheKey(bbox, zoom);
-
-        if (key === lastRenderKey && viewportCache.has(key)) {
-          const cached = viewportCache.get(key);
-          applyHouseFeatures(
-            cached.houses,
-            cached.threshold_reached,
-            cached.scan_ms
-          );
-          lastRenderKey = key;
-          return;
-        }
-
-        if (viewportCache.has(key)) {
-          const cached = viewportCache.get(key);
-          applyHouseFeatures(
-            cached.houses,
-            cached.threshold_reached,
-            cached.scan_ms
-          );
-          lastRenderKey = key;
-        }
-
-        if (activeController) {
-          activeController.abort();
-        }
-        activeController = new AbortController();
-        const signal = activeController.signal;
-
-        setStatus("Loading houses…");
-        refreshButtonEl.disabled = true;
-
-        const encodedBbox = encodeURIComponent(bbox.join(","));
-        fetch(`${backendBase}/houses?bbox=${encodedBbox}`, { signal: signal })
-          .then(function (response) {
-            if (!response.ok) {
-              throw new Error(response.status);
-            }
-            return response.json();
-          })
-          .then(function (payload) {
-            if(sequence!==requestSequence)return;
-            const houses = Array.isArray(payload.houses) ? payload.houses : [];
-            saveCache(key, {
-              houses: houses,
-              threshold_reached: !!payload.threshold_reached,
-              scan_ms: payload.scan_ms,
-            });
-            lastRenderKey = key;
-            applyHouseFeatures(
-              houses,
-              !!payload.threshold_reached,
-              payload.scan_ms
-            );
-          })
-          .catch(function (error) {
-            if (error.name === "AbortError" || sequence!==requestSequence) {
-              return;
-            }
-            setStatus("Backend unavailable: " + error.message);
-          })
-          .finally(function () {
-            if(sequence!==requestSequence)return;
-            refreshButtonEl.disabled = false;
-            activeController = null;
-          });
-      }
-
-      function scheduleRefresh() {
-        if (refreshTimer !== null) {
-          clearTimeout(refreshTimer);
-        }
-        refreshTimer = setTimeout(refreshData, REFRESH_DEBOUNCE_MS);
-      }
-
-      map.on("moveend", scheduleRefresh);
-      map.on("zoom", function () {
-        zoomValueEl.textContent = "Zoom: " + map.getZoom();
+        maxZoom: 19, attribution: "&copy; OpenStreetMap contributors", referrerPolicy: "origin"
+      }).on("tileerror", () => { el("status").textContent = "Some map tiles could not load. Check your connection."; }).addTo(map);
+      const safeText = text => { const node = document.createElement("div"); node.textContent = text; return node; };
+      const houses = L.layerGroup().addTo(map);
+      const streets = L.geoJSON(null, {style: {color:"#244b78",weight:3},
+        onEachFeature: (feature,layer) => layer.bindPopup(() => safeText(feature.properties.name || feature.properties.id))}).addTo(map);
+      const regions = L.geoJSON(null, {style: {color:"#406539",weight:2,fillOpacity:0.04},
+        onEachFeature: (feature,layer) => layer.bindPopup(() => safeText(feature.properties.name || feature.properties.id))}).addTo(map);
+      const reverse = L.layerGroup().addTo(map);
+      const cache = new Map();
+      let viewportController = null, reverseController = null, sequence = 0, timer = null;
+      const enabled = id => el(id).checked;
+      const plans = zoom => ({
+        houses: enabled("showHouses") && zoom >= 16,
+        streets: enabled("showStreets") && zoom >= 14,
+        regions: enabled("showRegions"),
+        limit: zoom <= 17 ? 4000 : 10000,
+        stride: zoom <= 17 ? 5 : 1
       });
-      showHousesEl.addEventListener("change", scheduleRefresh);
-      for(const id of ["showStreets","showRegions","showViewport"])document.getElementById(id).addEventListener("change",scheduleRefresh);
-      document.getElementById("reverseMode").addEventListener("change",()=>{if(reverseController)reverseController.abort();reverseLayer.clearLayers();document.getElementById("reverseResult").textContent="";});
-      map.on("click",async event=>{
-        if(!document.getElementById("reverseMode").checked)return;
-        if(reverseController)reverseController.abort();
-        const controller=new AbortController();reverseController=controller;
-        const result=document.getElementById("reverseResult");result.textContent="Finding closest object…";reverseLayer.clearLayers();
-        L.circleMarker(event.latlng,{radius:6,color:"#111",fillOpacity:1}).addTo(reverseLayer);
+      async function json(url, signal) {
+        const response = await fetch(url, {signal});
+        const body = await response.json();
+        if (!response.ok) throw Error(body.error || `HTTP ${response.status}`);
+        return body;
+      }
+      function render(payload, plan) {
+        houses.clearLayers(); streets.clearLayers(); regions.clearLayers();
+        for (const h of payload.houses.houses || []) {
+          if (!Number.isFinite(h.lat) || !Number.isFinite(h.lon)) continue;
+          const color = h.street || h.house_number || h.postcode || h.city ? "#c73a24" : "#c49a42";
+          L.circleMarker([h.lat,h.lon], {radius:3,color,fillColor:color,fillOpacity:0.8,weight:1})
+            .bindPopup(() => safeText([h.name, [h.street,h.house_number].filter(Boolean).join(" "), [h.postcode,h.city].filter(Boolean).join(" "),h.id].filter(Boolean).join("\n")))
+            .addTo(houses);
+        }
+        streets.addData(payload.streets); regions.addData(payload.regions);
+        const count = (payload.houses.houses || []).length;
+        el("houseCount").textContent = !enabled("showHouses") ? "Houses: hidden" :
+          !plan.houses ? "Houses: zoom in to 16+" : `Houses: ${count.toLocaleString("de-DE")}${plan.stride > 1 ? " (sampled)" : ""}`;
+        el("thresholdWarning").style.display = payload.houses.threshold_reached ? "block" : "none";
+        const note = enabled("showStreets") && !plan.streets ? " · Streets need zoom 14+" : "";
+        el("status").textContent = `Backend online · ${Number(payload.houses.scan_ms || 0).toFixed(1)} ms${note}`;
+      }
+      async function refresh(force = false) {
+        clearTimeout(timer);
+        const current = ++sequence;
+        if (viewportController) viewportController.abort();
+        viewportController = null;
+        el("zoomValue").textContent = `Zoom: ${map.getZoom()}`;
+        el("refreshButton").disabled = false;
+        el("thresholdWarning").style.display = "none";
+        if (!enabled("showViewport")) {
+          houses.clearLayers(); streets.clearLayers(); regions.clearLayers();
+          el("houseCount").textContent = "Houses: viewport off"; el("status").textContent = "Viewport loading is off."; return;
+        }
+        const zoom = map.getZoom(), plan = plans(zoom), b = map.getBounds();
+        const bbox = [Math.max(-180,b.getWest()),Math.max(-90,b.getSouth()),Math.min(180,b.getEast()),Math.min(90,b.getNorth())];
+        const key = JSON.stringify([zoom,bbox,plan]);
+        if (!force && cache.has(key)) { render(cache.get(key),plan); return; }
+        const controller = new AbortController(); viewportController = controller;
+        el("refreshButton").disabled = true; el("status").textContent = "Loading visible objects…";
+        const query = `bbox=${encodeURIComponent(bbox.join(","))}&zoom=${zoom}`;
+        const emptyGeometry = {type:"FeatureCollection",features:[]};
         try {
-          const response=await fetch(`${backendBase}/reverse?lat=${event.latlng.lat}&lon=${event.latlng.lng}`,{signal:controller.signal});
-          const payload=await response.json();if(!response.ok)throw Error(payload.error||response.status);
-          if(controller!==reverseController)return;
+          const [houseData,streetData,regionData] = await Promise.all([
+            plan.houses ? json(`${backendBase}/houses?${query}&limit=${plan.limit}&stride=${plan.stride}`,controller.signal) : {houses:[]},
+            plan.streets ? json(`${backendBase}/streets?${query}`,controller.signal) : emptyGeometry,
+            plan.regions ? json(`${backendBase}/regions?${query}`,controller.signal) : emptyGeometry
+          ]);
+          if (current !== sequence) return;
+          const payload = {houses:houseData,streets:streetData,regions:regionData};
+          cache.set(key,payload); while(cache.size > 8) cache.delete(cache.keys().next().value);
+          render(payload,plan);
+        } catch(error) {
+          if (current !== sequence || error.name === "AbortError") return;
+          houses.clearLayers();streets.clearLayers();regions.clearLayers();
+          el("houseCount").textContent = "Houses: unavailable";
+          el("status").textContent = `Loading failed: ${error.message}`;
+        } finally {
+          if (current === sequence) { el("refreshButton").disabled = false; viewportController = null; }
+        }
+      }
+      function schedule() {
+        // Invalidate and cancel immediately so an old viewport cannot paint during debounce.
+        ++sequence; if(viewportController) viewportController.abort();
+        clearTimeout(timer); timer = setTimeout(() => refresh(),180);
+      }
+      map.on("moveend",schedule);
+      map.on("zoom",() => {el("zoomValue").textContent = `Zoom: ${map.getZoom()}`;});
+      for(const id of ["showHouses","showStreets","showRegions","showViewport"]) {
+        el(id).addEventListener("change",() => {
+          ++sequence;if(viewportController)viewportController.abort();
+          if(!enabled("showHouses"))houses.clearLayers();
+          if(!enabled("showStreets"))streets.clearLayers();
+          if(!enabled("showRegions"))regions.clearLayers();
+          refresh();
+        });
+      }
+      el("refreshButton").addEventListener("click",() => refresh(true));
+      el("reverseMode").addEventListener("change",() => {
+        if(reverseController)reverseController.abort();reverseController=null;
+        reverse.clearLayers();el("reverseResult").textContent="";
+      });
+      map.on("click",async event => {
+        if(!enabled("reverseMode"))return;
+        if(reverseController)reverseController.abort();
+        const controller = new AbortController();reverseController=controller;
+        reverse.clearLayers();el("reverseResult").textContent="Finding closest object…";
+        L.circleMarker(event.latlng,{radius:6,color:"#111",fillOpacity:1}).addTo(reverse);
+        try {
+          const payload=await json(`${backendBase}/reverse?lat=${event.latlng.lat}&lon=${event.latlng.lng}`,controller.signal);
+          if(controller!==reverseController || !enabled("reverseMode"))return;
           const hit=payload.nearest;
-          result.textContent=hit?`${hit.kind}: ${hit.name||hit.id}\n${hit.full_address||"Address unavailable in source data"}\n${hit.distance_m.toFixed(1)} m · ${hit.id}\nRegions: ${payload.regions.map(r=>r.name||r.id).join(", ")}`:"No objects found.";
-          for(const item of payload.results||[]) {
-            L.geoJSON(item.geometry,{style:{color:"#b52b20",weight:5,fillOpacity:0.12},pointToLayer:(_,latlng)=>L.circleMarker(latlng,{radius:7,color:"#b52b20"})}).bindPopup(()=>{const el=document.createElement("div");el.textContent=`${item.id}: ${item.full_address||item.name}`;return el;}).addTo(reverseLayer);
+          el("reverseResult").textContent=hit ? `${hit.kind}: ${hit.name||hit.id}\n${hit.full_address||"Address unavailable in source data"}\n${hit.distance_m.toFixed(1)} m · ${hit.id}\nRegions: ${payload.regions.map(r=>r.name||r.postcode||r.id).join(", ")}` : "No objects found.";
+          for(const item of payload.results || []) {
+            L.geoJSON(item.geometry,{style:{color:"#b52b20",weight:5,fillOpacity:0.12},
+              pointToLayer:(_,latlng)=>L.circleMarker(latlng,{radius:7,color:"#b52b20"})})
+              .bindPopup(()=>safeText(`${item.id}: ${item.full_address||item.name}`)).addTo(reverse);
           }
-          if(hit)L.polyline([event.latlng,[hit.lat,hit.lon]],{color:"#b52b20",dashArray:"5,5",weight:2}).addTo(reverseLayer);
-        } catch(error) {if(error.name!=="AbortError" && controller===reverseController)result.textContent=`Reverse lookup failed: ${error.message}`;}
+          if(hit)L.polyline([event.latlng,[hit.lat,hit.lon]],{color:"#b52b20",dashArray:"5,5",weight:2}).addTo(reverse);
+        } catch(error) {
+          if(error.name!=="AbortError" && controller===reverseController)el("reverseResult").textContent=`Reverse lookup failed: ${error.message}`;
+        }
       });
-      refreshButtonEl.addEventListener("click", function () {
-        lastRenderKey = null;
-        refreshData();
-      });
-
-      setStatus("Ready.");
-      refreshData();
+      refresh();
     })();
   </script>
 </body>
