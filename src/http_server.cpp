@@ -202,14 +202,15 @@ void append_optional_string(std::ostringstream& output,
 }
 
 [[nodiscard]] std::string serialize_houses(const DataStore& data,
-                                           const ViewportQueryResult& query) {
+                                           const ViewportQueryResult& query,std::size_t threshold,std::size_t stride) {
     std::ostringstream output;
     output << "{\"matched\":" << query.matched
            << ",\"returned\":" << query.building_indices.size()
-           << ",\"threshold\":" << kViewportBuildingThreshold
+           << ",\"threshold\":" << threshold
+           << ",\"sampled\":" << (stride>1?"true":"false")
            << ",\"threshold_reached\":"
            << (query.threshold_reached ? "true" : "false")
-           << ",\"matched_exact\":" << (query.threshold_reached ? "false" : "true")
+           << ",\"matched_exact\":" << (query.threshold_reached || stride>1 ? "false" : "true")
            << ",\"scan_ms\":" << std::fixed << std::setprecision(3)
            << query.scan_milliseconds
            << ",\"houses\":[";
@@ -313,16 +314,24 @@ void append_optional_string(std::ostringstream& output,
     }
 
     status=200;reason="OK";
+    auto integer=[&](const char* key,std::size_t fallback,std::size_t maximum)->std::optional<std::size_t>{
+        auto raw=query_parameter(request.query,key);if(!raw)return fallback;
+        auto value=parse_double(*raw);if(!value || *value<1 || *value>static_cast<double>(maximum) || std::floor(*value)!=*value)return std::nullopt;
+        return static_cast<std::size_t>(*value);
+    };
+    auto zoom=integer("zoom",19,19),limit=integer("limit",kViewportBuildingThreshold,kViewportBuildingThreshold),stride=integer("stride",1,100);
+    if(!zoom||!limit||!stride){status=400;reason="Bad Request";return error_json("Invalid zoom, limit or stride");}
     if(request.path!="/houses") {
-        try {return geometry_json(data,spatial,viewport->minimum,viewport->maximum,request.path=="/streets"?1:2);}
+        if(request.path=="/streets" && *zoom<14)return "{\"type\":\"FeatureCollection\",\"features\":[]}";
+        try {return geometry_json(data,spatial,viewport->minimum,viewport->maximum,request.path=="/streets"?1:2,static_cast<int>(*zoom));}
         catch(const std::exception& e){status=400;reason="Bad Request";return error_json(e.what());}
     }
     const auto start=std::chrono::steady_clock::now();
     ViewportQueryResult result;
-    result.building_indices=spatial.viewport(viewport->minimum,viewport->maximum,0,kViewportBuildingThreshold+1);
+    if(*zoom>=16)result.building_indices=spatial.viewport(viewport->minimum,viewport->maximum,0,*limit+1,*stride);
     result.matched=result.building_indices.size();
-    result.threshold_reached=result.matched>kViewportBuildingThreshold;
-    if(result.threshold_reached)result.building_indices.resize(kViewportBuildingThreshold);
+    result.threshold_reached=result.matched>*limit;
+    if(result.threshold_reached)result.building_indices.resize(*limit);
     result.scan_milliseconds=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
     std::cout << "Viewport houses matched=" << result.matched
               << " returned=" << result.building_indices.size()
@@ -330,7 +339,7 @@ void append_optional_string(std::ostringstream& output,
               << " scan_ms=" << result.scan_milliseconds << '\n';
     status = 200;
     reason = "OK";
-    return serialize_houses(data, result);
+    return serialize_houses(data, result,*limit,*stride);
 }
 
 [[nodiscard]] bool send_all(const int socket, const std::string& response) {
@@ -340,6 +349,7 @@ void append_optional_string(std::ostringstream& output,
                                     response.data() + sent,
                                     response.size() - sent,
                                     0);
+        if(written<0 && errno==EINTR)continue;
         if (written <= 0) {
             return false;
         }
@@ -403,8 +413,18 @@ int run_http_server(const DataStore& data,
             continue;
         }
 
+        timeval timeout{5,0};
+        ::setsockopt(client,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
+        ::setsockopt(client,SOL_SOCKET,SO_SNDTIMEO,&timeout,sizeof(timeout));
         std::array<char, 8192> request_buffer{};
-        const auto received = ::recv(client, request_buffer.data(), request_buffer.size(), 0);
+        std::size_t received=0;
+        while(received<request_buffer.size()) {
+            const auto count=::recv(client,request_buffer.data()+received,request_buffer.size()-received,0);
+            if(count<0 && errno==EINTR)continue;
+            if(count<=0)break;
+            received+=static_cast<std::size_t>(count);
+            if(std::string_view(request_buffer.data(),received).find("\r\n\r\n")!=std::string_view::npos)break;
+        }
         int status = 400;
         std::string_view reason = "Bad Request";
         std::string body = error_json("Malformed HTTP request");
@@ -412,7 +432,8 @@ int run_http_server(const DataStore& data,
             const std::string_view raw_request{
                 request_buffer.data(), static_cast<std::size_t>(received)};
             if (const auto request = parse_request_line(raw_request); request.has_value()) {
-                body = handle_request(*request, data, spatial, status, reason);
+                try {body = handle_request(*request, data, spatial, status, reason);}
+                catch(const std::exception& e){status=500;reason="Internal Server Error";body=error_json(e.what());}
             }
         }
 
