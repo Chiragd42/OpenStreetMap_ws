@@ -74,6 +74,7 @@ void print_usage() {
             continue;
         }
         if (argument == "--basicTest" || argument == "--revGeo") {
+            if(options.run_basic_test||options.reverse_file)throw std::runtime_error("Choose only one file-query mode");
             if (i + 2 >= argc) {
                 throw std::runtime_error{std::string(argument) + " requires input and output paths"};
             }
@@ -119,6 +120,14 @@ int main(const int argc, char* argv[]) {
     try {
         std::cout << std::unitbuf;
         const auto options = parse_options(argc, argv);
+        if(options.run_basic_test || options.reverse_file) {
+            std::error_code ec;
+            if(std::filesystem::absolute(options.pbf).lexically_normal()==std::filesystem::absolute(options.basic_test_output).lexically_normal() || std::filesystem::equivalent(options.pbf,options.basic_test_output,ec))
+                throw std::runtime_error("Output must not overwrite the PBF dataset");
+            ec.clear();
+            if(std::filesystem::absolute(options.basic_test_input).lexically_normal()==std::filesystem::absolute(options.basic_test_output).lexically_normal() || std::filesystem::equivalent(options.basic_test_input,options.basic_test_output,ec))
+                throw std::runtime_error("Input and output must be different files");
+        }
         if((options.run_basic_test||options.reverse_file) && !std::filesystem::is_regular_file(options.basic_test_input))
             throw std::runtime_error("Query input file not found: "+options.basic_test_input.string());
         auto result = sheet1::extract_pbf(options.pbf);

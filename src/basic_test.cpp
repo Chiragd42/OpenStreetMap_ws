@@ -94,6 +94,9 @@ void run_basic_test(const DataStore& data,
         throw std::runtime_error{"Could not open basic-test input: " + input_path.string()};
     }
 
+    std::error_code ec;
+    if(std::filesystem::absolute(input_path).lexically_normal()==std::filesystem::absolute(output_path).lexically_normal() || std::filesystem::equivalent(input_path,output_path,ec))
+        throw std::runtime_error("Input and output must be different files");
     std::ofstream output{output_path};
     if (!output) {
         throw std::runtime_error{"Could not open basic-test output: " + output_path.string()};
@@ -115,6 +118,8 @@ void run_basic_test(const DataStore& data,
         output << '\n';
     }
 
+    if(input.bad())throw std::runtime_error("Failed while reading name-query input");
+    output.flush();
     if (!output) {
         throw std::runtime_error{"Failed while writing basic-test output: " + output_path.string()};
     }

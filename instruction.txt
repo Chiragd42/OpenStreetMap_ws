@@ -41,7 +41,10 @@ Open http://127.0.0.1:5500 in a browser.
 Click the map with reverse mode enabled to see the closest object and address.
 Toggle streets and regions to show polylines and polygons. House markers use
 the existing red/addressed and gold/no-address colors. The viewport toggle
-disables automatic object loading. Houses load at zoom 14 or higher.
+disables automatic object loading. Streets load from zoom 14. Houses load
+from zoom 16: levels 16-17 show a 1-in-5 sample (up to 4000 markers);
+levels 18-19 show full detail (up to 10000 markers). Unlike the old main
+branch, a layer you switch off stays off when you zoom.
 The map uses internet-hosted Leaflet and OSM tiles. Backend defaults to 8080.
 Stop each server with Ctrl+C. Each backend invocation preprocesses the PBF;
 there is no persistent cache. Leave the PBF in place for your next run.
@@ -57,6 +60,9 @@ Reverse returns nearest building/street candidates, the nearest 10 buildings,
 and containing administrative/postal regions. Streets use closest points on
 great-circle segments, not their midpoint. Regions are a fallback when the
 closest building/street is over 1 km away, and always appear as context.
+Outside all regions, an indexed nearest polygon-edge search can return a
+closer area instead. Polygon distance is zero inside and spherical edge
+distance outside, with holes excluded from the interior.
 Missing address components remain empty; address_complete reports whether
 the source supplied enough information. Incomplete boundary relations
 are counted during extraction and cannot be used for region attribution.
@@ -79,7 +85,13 @@ Geometry and performance:
   Buildings use representative points. Streets include all regions touched
   or crossed by any segment, even if both endpoints are outside. Area
   memberships mean overlap, not strict parent/child containment.
-- Viewport responses are capped: 10000 houses, 1000 streets, 50 regions.
+- Viewport responses are capped: 10000 houses, 1000 streets at zoom 14-16
+  or 4000 at zoom 17+, and 50 regions. Region levels are filtered before
+  capping: up to admin level 6 at zoom 3-8, level 8 at zoom 9-11, all at 12+.
+  Display geometry is simplified to about a quarter tile pixel; preprocessing
+  and distances always use the original geometry. Each ring stays closed,
+  but display simplification is not a topology-preserving polygon operation.
+  The houses API accepts zoom, limit and stride; geometry routes accept zoom.
   Houses matched is a lower bound when capped. Geometry viewport results
   use conservative bounding boxes and may include objects just outside view.
 - The Sheet 1 name-file command retains its compatible substring sweep.
@@ -91,10 +103,11 @@ Germany/Europe scale is not validated.
 Measured on the local Baden-Wuerttemberg extract (652827459 bytes):
 5309163 building/address objects, 2408324 streets, 6451 administrative/postal
 areas. 509 areas have no complete geometry and cannot receive PIP queries.
-Extraction 27.577 s; spatial trees 3.044 s; all region assignments 49.208 s.
-Peak process memory after preprocessing: 1309 MiB. Timings vary by machine.
+Reviewed run: extraction 32.210 s; spatial trees 3.424 s; all region
+assignments 54.467 s. Peak process memory: 1395.984 MiB.
+Timings vary by machine.
 Three real make revGeo input lines each produced 10 sorted building IDs.
-An HTTP reverse lookup took 2.7 ms; a 22-object house viewport took 0.118 ms.
+An HTTP reverse lookup took 2.4 ms; a 22-object house viewport took 0.021 ms.
 Synthetic holes, disjoint outers, boundary points and cross-border paths were
 checked. 200 indexed top-10 queries matched exhaustive spherical searches.
 
