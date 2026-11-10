@@ -22,7 +22,7 @@ public:
     [[nodiscard]] bool covers(std::size_t area, Coordinate point) const;
     [[nodiscard]] std::vector<NearestObject> nearest_buildings(Coordinate point, std::size_t count = 10) const;
     [[nodiscard]] std::vector<NearestObject> reverse(Coordinate point) const;
-    [[nodiscard]] std::vector<std::size_t> viewport(Coordinate minimum, Coordinate maximum, int kind, std::size_t limit) const;
+    [[nodiscard]] std::vector<std::size_t> viewport(Coordinate minimum, Coordinate maximum, int kind, std::size_t limit, std::size_t stride = 1) const;
     void assign_regions(DataStore& data) const;
 private:
     struct Impl;

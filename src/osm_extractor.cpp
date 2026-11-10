@@ -128,11 +128,13 @@ void extend_bounds(BoundingBox& bounds, const Coordinate point) {
     double twice_area = 0.0;
     double longitude_sum = 0.0;
     double latitude_sum = 0.0;
+    // Translate before the shoelace sum to avoid cancellation for small buildings.
+    const double origin_x=longitude(points.front()),origin_y=latitude(points.front());
     for (std::size_t i = 0; i + 1 < points.size(); ++i) {
-        const double x0 = longitude(points[i]);
-        const double y0 = latitude(points[i]);
-        const double x1 = longitude(points[i + 1]);
-        const double y1 = latitude(points[i + 1]);
+        const double x0 = longitude(points[i])-origin_x;
+        const double y0 = latitude(points[i])-origin_y;
+        const double x1 = longitude(points[i + 1])-origin_x;
+        const double y1 = latitude(points[i + 1])-origin_y;
         const double cross = x0 * y1 - x1 * y0;
         twice_area += cross;
         longitude_sum += (x0 + x1) * cross;
@@ -143,8 +145,8 @@ void extend_bounds(BoundingBox& bounds, const Coordinate point) {
         return bounds_center(bounds);
     }
 
-    return coordinate_from_degrees(latitude_sum / (3.0 * twice_area),
-                                   longitude_sum / (3.0 * twice_area));
+    return coordinate_from_degrees(origin_y+latitude_sum / (3.0 * twice_area),
+                                   origin_x+longitude_sum / (3.0 * twice_area));
 }
 
 [[nodiscard]] long double absolute_twice_area(const std::vector<Coordinate>& points) {
@@ -169,7 +171,9 @@ void extend_bounds(BoundingBox& bounds, const Coordinate point) {
         return -1;
     }
     try {
-        const auto parsed = std::stoi(std::string{raw});
+        std::size_t consumed=0;
+        const auto parsed = std::stoi(std::string{raw},&consumed);
+        if(consumed!=raw.size())return -1;
         if (parsed < std::numeric_limits<std::int16_t>::min() ||
             parsed > std::numeric_limits<std::int16_t>::max()) {
             return -1;

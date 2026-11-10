@@ -62,6 +62,13 @@ struct Tree {
         else for(auto i=v.begin;i<v.end;++i) if(entries[i].box.intersects(b)) f(entries[i].id);
     }
     template<class F> void query(const Box& b,F&& f) const { if(!nodes.empty()) query_node(0,b,f); }
+    template<class F> bool query_until_node(std::size_t n,const Box& b,F& f) const {
+        const auto& v=nodes[n];if(!v.box.intersects(b))return true;
+        if(v.right)return query_until_node(v.left,b,f)&&query_until_node(v.right,b,f);
+        for(auto i=v.begin;i<v.end;++i)if(entries[i].box.intersects(b)&&!f(entries[i].id))return false;
+        return true;
+    }
+    template<class F> void query_until(const Box& b,F&& f) const {if(!nodes.empty())query_until_node(0,b,f);}
     // Branch-and-bound. bound converts squared box distance into a safe metric lower bound.
     template<class Bound,class Visit> void nearest(V p,Bound bound,Visit visit,double& best) const {
         if(nodes.empty()) return;
@@ -79,8 +86,11 @@ struct Tree {
 Box segment_box(V a,V b) { Box box; box.extend(a);box.extend(b); return box; }
 double orient(V a,V b,V c) { return (b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]); }
 bool on_segment(V a,V b,V p) {
-    constexpr double eps=1e-13;
-    return std::abs(orient(a,b,p))<=eps*std::max(1.0,std::hypot(b[0]-a[0],b[1]-a[1])) &&
+    constexpr double eps=1e-12;
+    const double length=std::hypot(b[0]-a[0],b[1]-a[1]);
+    if(length==0)return std::hypot(p[0]-a[0],p[1]-a[1])<=eps;
+    // Cross products have squared-coordinate units: scale tolerance by edge length.
+    return std::abs(orient(a,b,p))<=eps*length &&
         p[0]>=std::min(a[0],b[0])-eps && p[0]<=std::max(a[0],b[0])+eps &&
         p[1]>=std::min(a[1],b[1])-eps && p[1]<=std::max(a[1],b[1])+eps;
 }
@@ -218,7 +228,7 @@ std::vector<NearestObject> SpatialIndex::nearest_buildings(Coordinate p,std::siz
         return x.type!=y.type?x.type<y.type:x.value<y.value;
     };
     impl_->buildings.nearest(q,[](double s){return earth*2*std::asin(std::min(1.0,std::sqrt(s)/2));},[&](std::size_t i){
-        const auto& b=impl_->data.buildings[i];if(b.building_type==kInvalidStringId) return;
+        const auto& b=impl_->data.buildings[i];if(b.building_type==kInvalidStringId || impl_->data.strings.resolve(b.building_type)=="no") return;
         out.push_back({NearestObject::Kind::building,i,earth*angle(q,unit(b.point)),b.point});std::sort(out.begin(),out.end(),less);
         if(out.size()>count) out.pop_back(); if(out.size()==count) best=out.back().distance_metres+1e-8;
     },best);return out;
@@ -243,6 +253,16 @@ std::vector<NearestObject> SpatialIndex::reverse(Coordinate p) const {
         auto context=regions_at(p);
         std::sort(context.begin(),context.end(),[&](auto a,auto b){return impl_->data.administrative_areas[a].admin_level>impl_->data.administrative_areas[b].admin_level;});
         if(!context.empty()) out.insert(out.begin(),{NearestObject::Kind::area,context.front(),0,p});
+        else {
+            double area_best=out.empty()?INFINITY:out.front().distance_metres;
+            NearestObject area{NearestObject::Kind::area,0,INFINITY,p};
+            auto unproject=[&](V v){return coordinate(add(impl_->center,add(mul(impl_->east,v[0]),mul(impl_->north,v[1]))));};
+            impl_->boundaries.nearest(q,[factor](double s){return factor*std::sqrt(s);},[&](std::size_t i){
+                const auto& e=impl_->edges[i];auto [distance,point]=segment_distance(p,unproject(e.a),unproject(e.b));
+                if(distance<area_best){area_best=distance;area={NearestObject::Kind::area,e.area,distance,point};}
+            },area_best);
+            if(std::isfinite(area.distance_metres))out.insert(out.begin(),area);
+        }
     }
     return out;
 }
@@ -265,26 +285,35 @@ void SpatialIndex::assign_regions(DataStore& d) const {
         }
         // Also include regions entirely enclosed by this area, without a boundary crossing.
         if(a.has_geometry) impl_->regions.query(impl_->areas[i].box,[&](std::size_t j){
-            if(j!=i && !impl_->areas[j].rings.empty() && impl_->contains(i,impl_->areas[j].rings[0].points[0])) ids.push_back(static_cast<std::uint32_t>(j));
+            if(j==i)return;
+            for(std::size_t k=0;k<impl_->areas[j].rings.size();++k)
+                if(!impl_->areas[j].inner[k] && impl_->contains(i,impl_->areas[j].rings[k].points[0])) {ids.push_back(static_cast<std::uint32_t>(j));break;}
         });
         ids.erase(std::remove(ids.begin(),ids.end(),i),ids.end());save(a);
     }
     std::cout<<"Region memberships: "<<d.region_memberships.size()<<"; assignment seconds: "<<std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count()<<'\n'<<std::flush;
 }
-std::vector<std::size_t> SpatialIndex::viewport(Coordinate minimum,Coordinate maximum,int kind,std::size_t limit) const {
+std::vector<std::size_t> SpatialIndex::viewport(Coordinate minimum,Coordinate maximum,int kind,std::size_t limit,std::size_t stride) const {
     std::vector<std::size_t> out;
+    if(limit==0)return out;
+    if(stride==0)throw std::invalid_argument("Stride must be positive");
     auto inside=[&](Coordinate p){return p.latitude_e7>=minimum.latitude_e7 && p.latitude_e7<=maximum.latitude_e7 && p.longitude_e7>=minimum.longitude_e7 && p.longitude_e7<=maximum.longitude_e7;};
     if(kind==0) {
         Coordinate c{static_cast<std::int32_t>((static_cast<std::int64_t>(minimum.latitude_e7)+maximum.latitude_e7)/2),static_cast<std::int32_t>((static_cast<std::int64_t>(minimum.longitude_e7)+maximum.longitude_e7)/2)};
         auto u=unit(c); const double radius=std::min(2.0,((maximum.latitude_e7-static_cast<double>(minimum.latitude_e7))+(maximum.longitude_e7-static_cast<double>(minimum.longitude_e7)))*1e-7*rad/2+1e-8);
         Box box;box.extend(sub(u,{radius,radius,radius}));box.extend(add(u,{radius,radius,radius}));
-        impl_->buildings.query(box,[&](std::size_t i){if(inside(impl_->data.buildings[i].point) && out.size()<limit) out.push_back(i);});
+        std::size_t matched=0;
+        impl_->buildings.query_until(box,[&](std::size_t i){if(inside(impl_->data.buildings[i].point) && matched++%stride==0) out.push_back(i);return out.size()<limit;});
     } else {
-        // Geographic viewport edges curve under projection; latitude arcs are sampled, then padded.
+        // Bound the projection of a spherical cap enclosing the whole viewport.
+        // The maximum gnomonic differential over that cap is sec^2(extent).
+        Coordinate center{static_cast<std::int32_t>((static_cast<std::int64_t>(minimum.latitude_e7)+maximum.latitude_e7)/2),static_cast<std::int32_t>((static_cast<std::int64_t>(minimum.longitude_e7)+maximum.longitude_e7)/2)};
+        const double radius=((maximum.latitude_e7-static_cast<double>(minimum.latitude_e7))+(maximum.longitude_e7-static_cast<double>(minimum.longitude_e7)))*1e-7*rad/2+1e-8;
+        const double extent=angle(unit(center),impl_->center)+radius;
         Box box;
-        for(int j=0;j<=16;++j) {const auto lon=static_cast<std::int32_t>(minimum.longitude_e7+(maximum.longitude_e7-static_cast<double>(minimum.longitude_e7))*j/16);box.extend(impl_->project({minimum.latitude_e7,lon}));box.extend(impl_->project({maximum.latitude_e7,lon}));}
-        const double pad=(box.hi[0]-box.lo[0]+box.hi[1]-box.lo[1])*0.01+1e-9;box.lo[0]-=pad;box.lo[1]-=pad;box.hi[0]+=pad;box.hi[1]+=pad;
-        if(kind==1) impl_->streets.query(box,[&](std::size_t i){if(out.size()<limit)out.push_back(i);});
+        if(extent>=pi/2-1e-6) {box.lo={-1e20,-1e20,0};box.hi={1e20,1e20,0};}
+        else {auto p=impl_->project(center);const double pad=radius/std::pow(std::cos(extent),2);box.extend(sub(p,{pad,pad,0}));box.extend(add(p,{pad,pad,0}));}
+        if(kind==1) impl_->streets.query_until(box,[&](std::size_t i){out.push_back(i);return out.size()<limit;});
         else impl_->regions.query(box,[&](std::size_t i){out.push_back(i);});
         unique(out);if(out.size()>limit) out.resize(limit);
     }
@@ -298,12 +327,14 @@ void run_reverse_file(const SpatialIndex& index,const DataStore& data,const std:
         if(!(row>>lat>>lon) || row>>extra || !std::isfinite(lat)||!std::isfinite(lon)||std::abs(lat)>90||std::abs(lon)>180) throw std::runtime_error("Invalid latitude longitude on line "+std::to_string(number));
         queries.push_back({static_cast<std::int32_t>(std::llround(lat*1e7)),static_cast<std::int32_t>(std::llround(lon*1e7))});
     }
+    if(input.bad())throw std::runtime_error("Cannot read reverse input");
     if(std::filesystem::absolute(input_path).lexically_normal()==std::filesystem::absolute(output_path).lexically_normal()) throw std::runtime_error("Input and output paths must differ");
     std::error_code ec;
     if(std::filesystem::equivalent(input_path,output_path,ec)) throw std::runtime_error("Input and output refer to the same file");
     std::ofstream output(output_path);if(!output) throw std::runtime_error("Cannot open reverse output");
     const auto start=std::chrono::steady_clock::now();
     for(auto q:queries) {auto hits=index.nearest_buildings(q);for(std::size_t i=0;i<hits.size();++i) {if(i)output<<", ";output<<format_osm_id(data.buildings[hits[i].index].id);}output<<'\n';}
+    output.flush();
     if(!output) throw std::runtime_error("Cannot write reverse output");
     std::cout<<"Reverse queries: "<<queries.size()<<"; query seconds: "<<std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count()<<'\n';
 }
